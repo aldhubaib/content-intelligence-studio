@@ -1,0 +1,16 @@
+# CI: keep the Studio image build context small.
+.git
+node_modules
+dist
+dist-ssr
+.cache
+coverage
+desktop/target
+demo-recordings
+scratch
+test-results
+playwright-report
+*.log
+.env
+.env.*
+!.env.example

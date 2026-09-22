@@ -1,33 +1,34 @@
 <script setup lang="ts">
-import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from 'reka-ui'
-import { tv } from 'tailwind-variants'
+import { SplitterGroup, SplitterPanel, SplitterResizeHandle } from "reka-ui";
+import { tv } from "tailwind-variants";
 
-import { formatShortcut, useI18n, useViewportKind } from '@open-pencil/vue'
+import { formatShortcut, useI18n, useViewportKind } from "@open-pencil/vue";
 
-import { useEditorStore } from '@/app/editor/active-store'
-import { appRuntimeConfig } from '@/app/runtime/config'
-import { loadEditorLayout, saveEditorLayout } from '@/app/shell/layout-storage'
-import { appMenuShortcut } from '@/app/shell/menu/shortcut'
-import { resolvedAppTheme } from '@/app/shell/theme'
-import { activeTab } from '@/app/tabs'
-import BrandMark from '@/components/brand/BrandMark.vue'
-import CanvasSplitRoot from '@/components/canvas/CanvasSplitRoot.vue'
-import CollabPanel from '@/components/CollabPanel/CollabPanel.vue'
-import EditorCanvas from '@/components/EditorCanvas.vue'
-import LayersPanel from '@/components/LayersPanel.vue'
-import MobileDrawer from '@/components/MobileDrawer.vue'
-import MobileHud from '@/components/MobileHud/MobileHud.vue'
-import PropertiesPanel from '@/components/PropertiesPanel.vue'
-import Toolbar from '@/components/Toolbar/Toolbar.vue'
-import IconButton from '@/components/ui/button/IconButton.vue'
-import splitterTheme from '@/theme/splitter'
+import { CI_STUDIO } from "@/app/ci/flags";
+import { useEditorStore } from "@/app/editor/active-store";
+import { appRuntimeConfig } from "@/app/runtime/config";
+import { loadEditorLayout, saveEditorLayout } from "@/app/shell/layout-storage";
+import { appMenuShortcut } from "@/app/shell/menu/shortcut";
+import { resolvedAppTheme } from "@/app/shell/theme";
+import { activeTab } from "@/app/tabs";
+import BrandMark from "@/components/brand/BrandMark.vue";
+import CanvasSplitRoot from "@/components/canvas/CanvasSplitRoot.vue";
+import CollabPanel from "@/components/CollabPanel/CollabPanel.vue";
+import EditorCanvas from "@/components/EditorCanvas.vue";
+import LayersPanel from "@/components/LayersPanel.vue";
+import MobileDrawer from "@/components/MobileDrawer.vue";
+import MobileHud from "@/components/MobileHud/MobileHud.vue";
+import PropertiesPanel from "@/components/PropertiesPanel.vue";
+import Toolbar from "@/components/Toolbar/Toolbar.vue";
+import IconButton from "@/components/ui/button/IconButton.vue";
+import splitterTheme from "@/theme/splitter";
 
-const showChrome = appRuntimeConfig.showChrome
-const store = useEditorStore()
-const { editor } = useI18n()
-const { isMobile } = useViewportKind()
-const initialEditorLayout = loadEditorLayout()
-const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
+const showChrome = appRuntimeConfig.showChrome;
+const store = useEditorStore();
+const { editor } = useI18n();
+const { isMobile } = useViewportKind();
+const initialEditorLayout = loadEditorLayout();
+const horizontalSplitterStyles = tv(splitterTheme)({ direction: "horizontal" });
 </script>
 
 <template>
@@ -53,7 +54,12 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
     >
       <div :class="horizontalSplitterStyles.divider()" />
     </SplitterResizeHandle>
-    <SplitterPanel id="canvas" :default-size="initialEditorLayout[1]" :min-size="30" class="flex">
+    <SplitterPanel
+      id="canvas"
+      :default-size="initialEditorLayout[1]"
+      :min-size="30"
+      class="flex"
+    >
       <div class="relative flex min-w-0 flex-1">
         <CanvasSplitRoot />
         <Toolbar />
@@ -69,7 +75,11 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
       :max-size="30"
       class="flex flex-col"
     >
-      <div class="flex shrink-0 items-center justify-between border-b border-border px-1.5 py-1.5">
+      <!-- CI: no collab / Share in the hosted Studio (ADR-058 §8). -->
+      <div
+        v-if="!CI_STUDIO"
+        class="flex shrink-0 items-center justify-between border-b border-border px-1.5 py-1.5"
+      >
         <CollabPanel />
       </div>
       <PropertiesPanel />
@@ -100,12 +110,22 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
         v-if="!isMobile"
         class="absolute top-7 left-7 z-10 flex items-center gap-2 rounded-lg border border-border bg-panel px-2 py-1 shadow-sm"
       >
-        <BrandMark variant="app-icon" :appearance="resolvedAppTheme" class="size-6" />
-        <span data-test-id="editor-document-name" class="text-xs text-surface">{{
-          store.state.documentName
-        }}</span>
+        <BrandMark
+          variant="app-icon"
+          :appearance="resolvedAppTheme"
+          class="size-6"
+        />
+        <span
+          data-test-id="editor-document-name"
+          class="text-xs text-surface"
+          >{{ store.state.documentName }}</span
+        >
         <IconButton
-          :label="editor.showUI({ shortcut: formatShortcut(appMenuShortcut('toggle-ui')) ?? '' })"
+          :label="
+            editor.showUI({
+              shortcut: formatShortcut(appMenuShortcut('toggle-ui')) ?? '',
+            })
+          "
           data-test-id="editor-show-ui"
           class="ml-1"
           @click="store.state.showUI = true"
@@ -116,7 +136,11 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
     </div>
   </div>
 
-  <div v-else :key="'bare-' + activeTab?.id" class="flex flex-1 overflow-hidden">
+  <div
+    v-else
+    :key="'bare-' + activeTab?.id"
+    class="flex flex-1 overflow-hidden"
+  >
     <div class="relative flex min-w-0 flex-1">
       <EditorCanvas />
     </div>

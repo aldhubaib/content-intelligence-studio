@@ -13,7 +13,8 @@ export async function initCanvasKit(): Promise<CanvasKit> {
   if (cachedCk) return cachedCk
   const CanvasKitInit = (await import('canvaskit-wasm/full')).default
   const ckPath = import.meta.resolve('canvaskit-wasm/full')
-  const binDir = new URL('.', ckPath).pathname
+  // CI: decode the file URL so a checkout path with spaces (`%20`) still resolves; mirrors `canvaskit.ts`.
+  const binDir = decodeURIComponent(new URL('.', ckPath).pathname)
   cachedCk = await CanvasKitInit({ locateFile: (file: string) => binDir + file })
   return cachedCk
 }

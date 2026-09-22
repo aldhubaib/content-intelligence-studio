@@ -1,0 +1,14 @@
+Content Intelligence Studio
+Copyright (c) 2026 Nizek
+
+This service is a fork of OpenPencil (https://github.com/open-pencil/open-pencil),
+pinned to upstream v0.15.1, distributed under the MIT License reproduced in
+`LICENSE`. The fork is maintained at
+https://github.com/aldhubaib/content-intelligence-studio for the Content
+Intelligence product (ADR-058 §8). Every change against upstream is listed in
+`PATCHES.md`; files added by the fork carry a `// CI:` (or `<!-- CI: -->`)
+comment on their first lines.
+
+OpenPencil bundles third-party components under their own licences, including
+CanvasKit (BSD-3-Clause, Skia), Noto and Inter fonts (SIL Open Font License 1.1)
+and the dependencies recorded in `bun.lock`. Those notices are unchanged.

@@ -1,3 +1,28 @@
+# Content Intelligence Studio
+
+> **Fork notice.** This repository is the design editor of
+> [Content Intelligence](https://github.com/aldhubaib/content-intelligence),
+> a fork of [OpenPencil](https://github.com/open-pencil/open-pencil) pinned to
+> **v0.15.1** (MIT — see `LICENSE` and `NOTICE`). It is deployed as the
+> standalone **`studio`** Railway service and embedded by the app in an
+> iframe; the app owns documents, brand kits, fonts, media, AI keys and
+> exports, the Studio owns editing (ADR-058 §8 in the app repository).
+>
+> - **What changed.** Every divergence from upstream is listed in
+>   [`PATCHES.md`](PATCHES.md). Hosted-mode code is behind the compile-time
+>   flag `VITE_CI_STUDIO=1` (`src/app/ci/`); an upstream build with the flag
+>   unset is byte-for-byte the OpenPencil surface.
+> - **Build the service.** `bun install && VITE_CI_STUDIO=1 bun run build`
+>   → `dist/`. `docker build -t ci-studio .` produces the nginx image
+>   Railway runs (`railway.json`, `/healthz`, CSP `frame-ancestors` from
+>   `STUDIO_APP_ORIGIN`).
+> - **Rebase on the next upstream release.** `git fetch upstream && git
+>   rebase v<next>` on `studio-main`, resolve only the files in
+>   `PATCHES.md`, rebuild with the flag, run `bun run check`, bump the
+>   version in the `PATCHES.md` header.
+>
+> The upstream README follows unchanged.
+
 # OpenPencil
 
 [![MIT license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
