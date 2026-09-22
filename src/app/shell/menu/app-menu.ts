@@ -18,6 +18,7 @@ import IconZoomOut from '~icons/lucide/zoom-out'
 import type { CommandPaletteGroup, CommandPaletteItem, MenuEntry } from '@open-pencil/vue'
 import { shortcutPlatform, useEditorCommands, useI18n } from '@open-pencil/vue'
 
+import { hostedHidesMenuItem, hostedMenuLabel } from '@/app/ci/menu'
 import { useEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
 import { setSnappingPreference } from '@/app/settings/preferences/apply'
@@ -244,7 +245,8 @@ export function useAppMenu() {
 
   function menuLabel(entry: AppMenuActionItem): string {
     const key = translatedMenuItemLabels[entry.id]
-    return key ? menu.value[key] : entry.label
+    // CI: "Save" reads "Save version" in the hosted Studio (ADR-058 §8).
+    return hostedMenuLabel(entry.id) ?? (key ? menu.value[key] : entry.label)
   }
 
   function resolvePalette(entry: AppMenuActionItem) {
@@ -260,6 +262,8 @@ export function useAppMenu() {
   function buildEntry(entry: AppMenuEntry): MenuEntry | null {
     if (!isVisible(entry)) return null
     if (isSeparator(entry)) return { separator: true }
+    // CI: the app owns documents — no New / Open / Save As / Close in the hosted Studio.
+    if (hostedHidesMenuItem(entry.id)) return null
 
     if (entry.id === 'language') {
       return { label: menuLabel(entry), sub: languageMenu.value }

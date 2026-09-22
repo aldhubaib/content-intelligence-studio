@@ -1,6 +1,7 @@
 import type { EditorState } from '@open-pencil/core/editor'
 import { filesMessages } from '@open-pencil/vue'
 
+import { hostedSaveHandler } from '@/app/ci/save-override'
 import { downloadBlob } from '@/app/document/io/browser'
 import { documentNameFromFigPath } from '@/app/document/io/names'
 import { chooseBrowserFigSaveHandle, chooseTauriFigSavePath } from '@/app/document/io/save-targets'
@@ -52,6 +53,9 @@ export function createSaveActions({
   }
 
   async function saveFigFile() {
+    // CI: the hosted Studio saves a version through the app API, never a .fig (ADR-058 §8).
+    const hosted = hostedSaveHandler()
+    if (hosted) return hosted()
     const filePath = getFilePath()
     const fileHandle = getFileHandle()
     const storageBinding = getStorageBinding()
@@ -72,6 +76,9 @@ export function createSaveActions({
   }
 
   async function saveFigFileAs() {
+    // CI: no "Save As" target exists in the hosted Studio; it is the same Save version.
+    const hosted = hostedSaveHandler()
+    if (hosted) return hosted()
     const { data, version } = await buildVersionedFigFile()
 
     if (IS_TAURI) {

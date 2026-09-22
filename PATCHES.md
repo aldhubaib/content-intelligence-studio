@@ -31,6 +31,36 @@ unmodified surface.
 | F-4 | `src/components/settings/SettingsDialog.vue` | Settings sections **Storage** (cloud accounts) and **MCP** are filtered out when `CI_STUDIO`. |
 | F-5 | `vite/pwa.ts` | `VitePWA({ disable })` when `VITE_CI_STUDIO=1` — the hosted Studio is an iframe with immutable hashed assets; a service worker would pin a stale bundle against a newer host protocol. |
 
+Formatting: every touched file is run through the repo's `oxfmt` so the
+diff against upstream is the guarded lines only.
+
+## Hosted mode (`?doc=…&ws=…&token=…&api=…`, runtime)
+
+Hosted mode is a runtime state read from the URL by `src/app/ci/hosted.ts`;
+without `?doc` the page is upstream OpenPencil (`bun run dev` still works).
+Everything under `src/app/ci/` and `src/components/ci/` is ours; the
+upstream files below carry one guarded call each.
+
+| # | File | Change |
+| --- | --- | --- |
+| H-1 | `src/app/ci/hosted.ts` | **Added.** Parses / validates the hosted URL parameters, scrubs `token` from the address bar, holds the live bearer (`hostedToken`). |
+| H-2 | `src/app/ci/protocol.ts` | **Added.** Typed `postMessage` protocol Studio ⇄ host, origin-checked both ways (`studio:ready` / `dirty` / `saved` / `error` / `token-expiring` / `close-ok` / `close-blocked`; `host:token` / `save-version` / `request-close`). |
+| H-3 | `src/app/ci/api.ts` | **Added.** `StudioAPI` over the app's `GET|PUT /api/studio/templates/{id}` with the bearer, typed `409` / `401` errors, same-origin `fetchBytes`. Binds the native `fetch` at module load — the engine's web-font manager swaps `globalThis.fetch` for a host-checked proxy during provider calls. |
+| H-4 | `src/app/ci/document.ts` | **Added.** The app's `openpencil-scene-graph` JSON envelope (ADR-058 §5): `serializeGraph` / `deserializeGraph` / `resolveBrandStrings`. No `.fig` on the wire. |
+| H-5 | `src/app/ci/fonts.ts` | **Added.** Brand fonts from `fonts[]` only (FB-33): online providers off, host font loader over the app API, Arabic fallback chain = brand Arabic family → bundled Noto Naskh Arabic (served from this origin). |
+| H-6 | `src/app/ci/brand-library.ts` | **Added.** Brand kit → one component library per workspace (logo light / dark, photos as image components) + one variables collection (five colours, Arabic + Latin font names). |
+| H-7 | `src/app/ci/slots.ts`, `src/components/ci/SlotsPanel.vue` | **Added.** `slot:<name>` bindings from plugin data / layer names over the fixed vocabulary; the **Slots** side panel with jump-to and the missing-required / duplicate warnings. (Placed under `src/components/ci/` because upstream keeps Vue components out of `src/app/`.) |
+| H-8 | `src/app/ci/session.ts`, `src/app/ci/boot.ts`, `src/app/ci/save-override.ts`, `src/app/ci/menu.ts` | **Added.** The hosted session: load → autosave `draft` every 30 s while dirty → **Save version** (⌘S) → `409` conflict copy; boot from `WorkspaceView`; the hosted save handler the upstream save actions defer to; hidden / relabelled menu ids. |
+| H-9 | `src/main.ts` | `preloadFonts()` is skipped when hosted — no CDN font preload before the session disables the providers. |
+| H-10 | `src/views/WorkspaceView.vue` | No home tab when hosted; `bootHostedStudio(store)` after the first tab exists. |
+| H-11 | `src/app/document/io/save.ts` | `saveFigFile` / `saveFigFileAs` defer to `hostedSaveHandler()` when one is registered (hosted mode). |
+| H-12 | `src/app/shell/menu/app-menu.ts` | Menu entries consult `hostedHidesMenuItem` / `hostedMenuLabel` (hidden ids: `new`, `open`, `open-recent`, `open-storage-workspace`, `save-as`, `export-fig`, `autosave`, `close`; **Save** → **Save version**). |
+| H-13 | `src/components/editor/EditorWorkspace.vue` | `SlotsPanel` mounted above the design panel when hosted. |
+
+Tests: `tests/engine/app/ci/*.test.ts` (unit, `bun test tests/engine/app/ci`)
+and `tests/e2e/ci/hosted.spec.ts` (Playwright smoke over an intercepted app
+API; fixture `tests/fixtures/ci/hosted-template.json`).
+
 ## Hosted service files (no upstream counterpart)
 
 | # | File | Purpose |

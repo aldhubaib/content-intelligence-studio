@@ -10,4 +10,4 @@
 // `./hosted.ts`; this file only knows what the bundle was built for.
 
 /** True when the bundle was produced with `VITE_CI_STUDIO=1` (the Studio service). */
-export const CI_STUDIO: boolean = import.meta.env.VITE_CI_STUDIO === "1";
+export const CI_STUDIO: boolean = import.meta.env.VITE_CI_STUDIO === '1'

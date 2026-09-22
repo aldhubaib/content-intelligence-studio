@@ -7,6 +7,8 @@ import { useRoute, useRouter } from 'vue-router'
 import { startMCPRuntime, stopMCPRuntime } from '@/app/automation/mcp/runtime'
 import { startWebMCP } from '@/app/automation/webmcp/runtime'
 import { exposeCollaborationActions } from '@/app/browser-bridge'
+import { bootHostedStudio } from '@/app/ci/boot'
+import { isHosted } from '@/app/ci/hosted'
 import { COLLAB_KEY, useCollab } from '@/app/collab/use'
 import { createDemoShapes } from '@/app/demo/document'
 import type { PendingOpenFile } from '@/app/document/io/pending-open'
@@ -45,6 +47,7 @@ const shouldCreateHome =
   route.path === '/' &&
   !appRuntimeConfig.test &&
   !route.meta.demo &&
+  !isHosted() && // CI: the hosted Studio opens straight into the app's template (ADR-058 §8).
   (isTauri() || appRuntimeConfig.recentFiles)
 let firstTab = activeTab.value
 if (!firstTab) firstTab = shouldCreateHome ? createHomeTab() : createTab()
@@ -143,6 +146,8 @@ async function bindAssociatedFileOpen(): Promise<void> {
 let stopWebMCP: (() => void) | undefined
 
 onMounted(async () => {
+  // CI: load the app's template into the first tab; a no-op standalone.
+  void bootHostedStudio(firstTab.store)
   stopWebMCP = startWebMCP(getActiveStore)
   await startMCPRuntime(getActiveStore)
 
