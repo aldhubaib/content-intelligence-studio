@@ -36,6 +36,15 @@
 >   payload, no key field — and the tab disappears when the workspace has AI
 >   switched off. No Share / account / new tab / close tab; the window title
 >   is the template name. Standalone (`bun run dev`, no `?doc`) is untouched.
+> - **The only editor.** Since Track E3c Part G the app has no editor of
+>   its own: its React shell, browser engine adapter and `/api/design-engine`
+>   routes are gone, and `@open-pencil/core` + CanvasKit stay there
+>   server-side only (its in-process renderer is the fallback when the
+>   sidecar is not configured). Everything a person draws happens here.
+> - **Environment.** `PORT` (nginx), `STUDIO_APP_ORIGIN`,
+>   `STUDIO_INTERNAL_SECRET`, `STUDIO_RENDER_PORT` / `_HOST`,
+>   `STUDIO_RENDER_MAX_BODY_MB` / `_FONT_CACHE_MB` / `_WARM` — meanings in
+>   `PATCHES.md` § Environment.
 > - **Rebase on the next upstream release.** `git fetch upstream && git
 >   rebase v<next>` on `studio-main`, resolve only the files in
 >   `PATCHES.md`, rebuild with the flag, run `bun run check`, bump the

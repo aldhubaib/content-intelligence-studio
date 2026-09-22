@@ -69,8 +69,12 @@ upstream files below carry one guarded call each.
 | H-24 | `src/app/ci/session.ts` | After a load: `applyAI(payload.ai)` (default pins settings via `replaceAIModelSettings` + `setHostedAIConfig`; injectable) and `setTitle(hostedWindowTitle(name))` (`<template> · Content Intelligence Studio`, follows an inline rename; injectable). `StudioTemplatePayload.ai.models` typed in `src/app/ci/api.ts`. |
 | H-25 | `src/components/PropertiesPanel.vue`, `src/components/MobileDrawer.vue` | AI tab + panel rendered only when `!isHosted() \|\| hostedAIEnabled`; the properties panel falls back to **Design** when the tab disappears. |
 | H-26 | `src/components/settings/SettingsDialog.vue` | Section **AI & agents** (provider list, key field, model profiles) filtered out when hosted — the provider is pinned. |
-| H-28 | `tools/unit-tests/src/shards.ts` | `tests/engine/studio-render` joins the `render` shard (the sidecar suites load CanvasKit like the canvas suites) so `bun run test:tools` stays green. |
 | H-27 | `src/components/TabBar.vue` | No **new tab** button and no **close tab** control when hosted: the app opened the one template this session edits. |
+| H-28 | `tools/unit-tests/src/shards.ts` | `tests/engine/studio-render` joins the `render` shard (the sidecar suites load CanvasKit like the canvas suites) so `bun run test:tools` stays green. |
+
+Part G (app-side retirement) changed nothing here: the fork is the only
+editor; the app keeps `@open-pencil/core` + CanvasKit server-side for the
+fallback renderer and reads `studio-render/protocol.ts` as the contract.
 
 Tests: `tests/engine/app/ci/*.test.ts` (unit, `bun test tests/engine/app/ci`;
 `ai-theme.test.ts` covers the pinned settings, the live-bearer credential
