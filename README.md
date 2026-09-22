@@ -13,9 +13,20 @@
 >   flag `VITE_CI_STUDIO=1` (`src/app/ci/`); an upstream build with the flag
 >   unset is byte-for-byte the OpenPencil surface.
 > - **Build the service.** `bun install && VITE_CI_STUDIO=1 bun run build`
->   → `dist/`. `docker build -t ci-studio .` produces the nginx image
+>   → `dist/`. `docker build -t ci-studio .` produces the nginx + Bun image
 >   Railway runs (`railway.json`, `/healthz`, CSP `frame-ancestors` from
 >   `STUDIO_APP_ORIGIN`).
+> - **Render sidecar.** The same image runs `studio-render/server.ts` (Bun,
+>   `127.0.0.1:8788`): `POST /internal/render` turns an
+>   `openpencil-scene-graph` document into a PNG with the pinned engine — the
+>   app's `studio` renderer calls it with
+>   `Authorization: Bearer <STUDIO_INTERNAL_SECRET>`; nginx proxies
+>   `/internal/` and refuses requests without a bearer;
+>   `GET /internal/healthz` is open. Fonts travel as sha256 refs and are
+>   cached in memory (`428 fonts_missing` → resend with bytes). Locally:
+>   `STUDIO_INTERNAL_SECRET=<≥16 chars> bun run render:dev`, tests
+>   `bun run render:test`, types + lint `bun run render:check`. Contract in
+>   `studio-render/protocol.ts`.
 > - **Rebase on the next upstream release.** `git fetch upstream && git
 >   rebase v<next>` on `studio-main`, resolve only the files in
 >   `PATCHES.md`, rebuild with the flag, run `bun run check`, bump the

@@ -56,6 +56,8 @@ upstream files below carry one guarded call each.
 | H-11 | `src/app/document/io/save.ts` | `saveFigFile` / `saveFigFileAs` defer to `hostedSaveHandler()` when one is registered (hosted mode). |
 | H-12 | `src/app/shell/menu/app-menu.ts` | Menu entries consult `hostedHidesMenuItem` / `hostedMenuLabel` (hidden ids: `new`, `open`, `open-recent`, `open-storage-workspace`, `save-as`, `export-fig`, `autosave`, `close`; **Save** → **Save version**). |
 | H-13 | `src/components/editor/EditorWorkspace.vue` | `SlotsPanel` mounted above the design panel when hosted. |
+| H-14 | `tsconfig.json` | Path alias `#studio-render/*` → `./studio-render/*` (used by the sidecar tests; the sidecar itself is type-checked by its own `studio-render/tsconfig.json`). |
+| H-15 | `package.json` | Scripts `render:dev` / `render:test` / `render:check` for the sidecar. Nothing else in the upstream scripts changes. |
 
 Tests: `tests/engine/app/ci/*.test.ts` (unit, `bun test tests/engine/app/ci`)
 and `tests/e2e/ci/hosted.spec.ts` (Playwright smoke over an intercepted app
@@ -65,12 +67,15 @@ API; fixture `tests/fixtures/ci/hosted-template.json`).
 
 | # | File | Purpose |
 | --- | --- | --- |
-| S-1 | `Dockerfile`, `.dockerignore` | Two-stage image: `oven/bun:1.4.2` builds with `VITE_CI_STUDIO=1`; `nginx:1.27-alpine` serves `dist/`. |
-| S-2 | `deploy/nginx/studio.conf.template` | nginx site rendered by envsubst (`PORT`, `STUDIO_APP_ORIGIN`): CSP with `frame-ancestors ${STUDIO_APP_ORIGIN}`, `connect-src` / `font-src` limited to self + the app, `wasm-unsafe-eval` for CanvasKit, immutable `/assets/`, `no-cache` shell, `/healthz`, `/internal/` → render sidecar on 127.0.0.1:8788 (Track E3c Part E). |
+| S-1 | `Dockerfile`, `.dockerignore` | Three-stage image: `oven/bun:1.4.2` builds with `VITE_CI_STUDIO=1` and the workspace `dist/`; a second Bun stage installs production-only `node_modules`; `nginx:1.27-alpine` + the Bun binary (`oven/bun:1.4.2-alpine`) serves `dist/` and runs the render sidecar (Part E). |
+| S-2 | `deploy/nginx/studio.conf.template` | nginx site rendered by envsubst (`PORT`, `STUDIO_APP_ORIGIN`, `STUDIO_RENDER_PORT`): CSP with `frame-ancestors ${STUDIO_APP_ORIGIN}`, `connect-src` / `font-src` limited to self + the app, `wasm-unsafe-eval` for CanvasKit, immutable `/assets/`, `no-cache` shell, `/healthz`; `/internal/healthz` proxied open, every other `/internal/` request refused with 401 unless it carries an `Authorization` header, then proxied to the sidecar (`proxy_request_buffering off`, 32 MB body, 120 s read). |
 | S-3 | `railway.json` | Railway builds the Dockerfile, health-checks `/healthz`. |
 | S-4 | `NOTICE` | Fork attribution (MIT). |
 | S-5 | `PATCHES.md` | This file. |
 | S-6 | `README.md` § "Content Intelligence Studio" | Fork header: what changed, how to build, how to rebase. |
+| S-7 | `studio-render/server.ts`, `studio-render/engine.ts`, `studio-render/protocol.ts`, `studio-render/font-cache.ts`, `studio-render/tsconfig.json` | **Added (Track E3c Part E).** The render sidecar: a Bun HTTP server (`127.0.0.1:${STUDIO_RENDER_PORT}`) — `POST /internal/render` `{ document, frameId?, format: "png", scale, mode?, fonts: [{ family, weight, hash, data? }], fontPolicy? }` → PNG bytes + `X-Render-Width/Height/Frame/Engine/Report`, `GET /internal/healthz`. `engine.ts` is the server twin of the app's E3b headless adapter: one CanvasKit (`canvaskit-wasm/full`) per process, `SkiaRenderer` over a 1×1 CPU surface, `loadFonts()` + bundled Noto Naskh Arabic as the Arabic fallback, online font providers off, direct raster at `scale`, readiness probe; fonts arrive as bytes keyed by sha256 (`font-cache.ts`, LRU by bytes, digest verified, `428 fonts_missing` lists unknown hashes). `tsconfig.json` type-checks the directory with Bun types against the packages' `dist` types. |
+| S-8 | `deploy/entrypoint.sh` | **Added.** Container entrypoint: starts the sidecar in the background, hands over to nginx's own entrypoint (envsubst + `nginx -g 'daemon off;'`), forwards SIGTERM to both and exits with the first process that stops so a dead engine never hides behind a healthy nginx. |
+| S-9 | `tests/engine/studio-render/*.test.ts` | **Added.** `bun run render:test` — request parsing, font cache, HTTP behaviour end to end against the real engine (PNG magic, sizes, 401 / 413 / 422 / 428 / 500, strict vs warn font policy). |
 
 ## Environment
 
@@ -79,3 +84,6 @@ API; fixture `tests/fixtures/ci/hosted-template.json`).
 | `VITE_CI_STUDIO` | build | `1` → hosted Studio bundle (F-1 … F-5). Unset → upstream OpenPencil. |
 | `PORT` | runtime | nginx listen port (Railway injects it; image default 8080). |
 | `STUDIO_APP_ORIGIN` | runtime | The one origin allowed to embed the Studio and to be called from it (Content Intelligence app). |
+| `STUDIO_INTERNAL_SECRET` | runtime | Bearer the app presents to `POST /internal/render` (≥ 16 chars; `= CONTENT_INTELLIGENCE_STUDIO_INTERNAL_SECRET` on the app). Unset → renders answer `503 not_configured`, the editor is unaffected. |
+| `STUDIO_RENDER_PORT` / `STUDIO_RENDER_HOST` | runtime | Sidecar listen port / bind address (image defaults 8788 / 127.0.0.1; nginx proxies `/internal/` there). |
+| `STUDIO_RENDER_MAX_BODY_MB` / `STUDIO_RENDER_FONT_CACHE_MB` / `STUDIO_RENDER_WARM` | runtime | Body cap (32), in-memory font cache cap (64), warm CanvasKit at boot (`1`). |

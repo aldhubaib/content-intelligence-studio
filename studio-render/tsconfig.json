@@ -1,0 +1,17 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["bun"],
+    "typeRoots": ["../packages/cli/node_modules/@types", "../node_modules/@types"],
+    "skipLibCheck": true,
+    "noEmit": true,
+    "paths": {
+      "#studio-render/*": ["./*"],
+      "@/*": ["../src/*"],
+      "@open-pencil/scene-graph": ["../packages/scene-graph/src/index.ts"],
+      "@open-pencil/scene-graph/*": ["../packages/scene-graph/src/*"]
+    }
+  },
+  "include": ["./**/*.ts", "../src/app/ci/document.ts", "../tests/engine/studio-render/**/*.ts"]
+}

@@ -49,6 +49,9 @@
       "#tests/*": [
         "./tests/*"
       ],
+      "#studio-render/*": [
+        "./studio-render/*"
+      ],
       "#docs-config/*": [
         "./packages/docs/.vitepress/*"
       ],
