@@ -2,6 +2,8 @@ import { ref } from 'vue'
 
 import { IS_TAURI } from '@open-pencil/core/constants'
 
+import { HostedCredentialStore } from '@/app/ci/ai'
+import { isHosted } from '@/app/ci/hosted'
 import { BrowserCredentialStore } from '@/app/settings/credentials/browser'
 import { MemoryCredentialStore } from '@/app/settings/credentials/memory'
 import { NativeCredentialStore } from '@/app/settings/credentials/native'
@@ -22,6 +24,8 @@ export const browserCredentialsRemembered = ref(
 )
 
 function initialCredentialStore(): CredentialStore {
+  // CI: the hosted Studio's only credential is the app's live bearer (never stored).
+  if (isHosted()) return new HostedCredentialStore()
   if (IS_TAURI) return new NativeCredentialStore()
   if (browserCredentialsRemembered.value) return new BrowserCredentialStore()
   return new MemoryCredentialStore()

@@ -7,7 +7,12 @@ import { StudioConflictError, type StudioAPI, type StudioTemplatePayload } from 
 import { serializeGraph } from '@/app/ci/document'
 import { hostedToken } from '@/app/ci/hosted'
 import type { HostBridge, HostToStudioMessage, StudioToHostMessage } from '@/app/ci/protocol'
-import { createHostedSession, type AutosaveScheduler, type HostedSession } from '@/app/ci/session'
+import {
+  createHostedSession,
+  hostedWindowTitle,
+  type AutosaveScheduler,
+  type HostedSession
+} from '@/app/ci/session'
 import { createEditorStore, type EditorStore } from '@/app/editor/session'
 
 const CONFIG = {
@@ -150,6 +155,8 @@ async function booted(data = payload()) {
   const remote = fakeAPI(data)
   const host = fakeBridge()
   const clock = fakeScheduler()
+  const aiApplied: Array<StudioTemplatePayload['ai']> = []
+  const titles: string[] = []
   session = createHostedSession({
     config: CONFIG,
     store,
@@ -157,13 +164,34 @@ async function booted(data = payload()) {
     bridge: host.bridge,
     autosave: clock,
     skipBrandLibrary: true,
-    skipFonts: true
+    skipFonts: true,
+    applyAI: (ai) => aiApplied.push(ai),
+    setTitle: (title) => titles.push(title)
   })
   await session.load()
-  return { store, remote, host, clock, session }
+  return { store, remote, host, clock, session, aiApplied, titles }
 }
 
 describe('hosted session', () => {
+  test("Part F: the payload's ai block reaches the AI binding once per load, models defaulted", async () => {
+    const { aiApplied } = await booted(
+      payload({ ai: { enabled: true, models: [{ id: 'gpt-4o', label: 'GPT-4o' }] } })
+    )
+    expect(aiApplied).toEqual([{ enabled: true, models: [{ id: 'gpt-4o', label: 'GPT-4o' }] }])
+    const off = await booted(payload({ ai: { enabled: false } }))
+    expect(off.aiApplied).toEqual([{ enabled: false, models: [] }])
+  })
+
+  test('Part F: the window title is the template name, and follows an inline rename', async () => {
+    expect(hostedWindowTitle('Portrait card')).toBe('Portrait card · Content Intelligence Studio')
+    expect(hostedWindowTitle('   ')).toBe('Content Intelligence Studio')
+    const { store, titles } = await booted()
+    expect(titles).toEqual(['Portrait card · Content Intelligence Studio'])
+    store.state.documentName = 'Landscape card'
+    await settle()
+    expect(titles.at(-1)).toBe('Landscape card · Content Intelligence Studio')
+  })
+
   test('loads the template into the store, names it, reports ready and stays clean', async () => {
     const { store, host, session } = await booted()
     expect(store.state.documentName).toBe('Portrait card')

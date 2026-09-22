@@ -2,6 +2,8 @@
 @import 'tw-animate-css';
 @import 'vue-stream-markdown/index.css' layer(components);
 @import './theme/chat/markdown.css';
+/* CI: Carbon Gray 100 / Gray 10 palettes for the hosted Studio (ADR-058 §8). */
+@import './theme/carbon.css';
 
 @custom-variant motion-safe {
   @media (prefers-reduced-motion: no-preference) {

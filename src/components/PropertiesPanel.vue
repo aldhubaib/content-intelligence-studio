@@ -1,9 +1,12 @@
 <script setup lang="ts">
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui'
+import { computed, watch } from 'vue'
 
 import { useI18n } from '@open-pencil/vue'
 
 import { useAIChat } from '@/app/ai/chat/use'
+import { hostedAIEnabled } from '@/app/ci/ai'
+import { isHosted } from '@/app/ci/hosted'
 
 import ChatPanel from './ChatPanel.vue'
 import CodePanel from './CodePanel.vue'
@@ -12,6 +15,11 @@ import ZoomDropdown from './editor/ZoomDropdown.vue'
 
 const { activeTab } = useAIChat()
 const { panels } = useI18n()
+// CI: the hosted Studio shows the AI tab only when the workspace's AI switch is on (ADR-058 §8).
+const showAI = computed(() => !isHosted() || hostedAIEnabled.value)
+watch(showAI, (visible) => {
+  if (!visible && activeTab.value === 'ai') activeTab.value = 'design'
+})
 </script>
 
 <template>
@@ -38,6 +46,7 @@ const { panels } = useI18n()
           {{ panels.code }}
         </TabsTrigger>
         <TabsTrigger
+          v-if="showAI"
           value="ai"
           data-test-id="properties-tab-ai"
           class="relative flex items-center gap-1 rounded px-2.5 py-1 text-[11px] text-muted hover:text-surface data-[state=active]:font-semibold data-[state=active]:text-surface after:absolute after:inset-x-2 after:-bottom-[9px] after:h-0.5 after:rounded-full after:bg-transparent data-[state=active]:after:bg-accent"
@@ -67,6 +76,7 @@ const { panels } = useI18n()
       </TabsContent>
 
       <TabsContent
+        v-if="showAI"
         value="ai"
         class="flex min-h-0 flex-1 flex-col"
         :force-mount="true"

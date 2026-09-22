@@ -7,6 +7,8 @@ import { computed, ref } from 'vue'
 
 import { useI18n } from '@open-pencil/vue'
 
+import { hostedAIEnabled } from '@/app/ci/ai'
+import { isHosted } from '@/app/ci/hosted'
 import { useEditorStore } from '@/app/editor/active-store'
 import { useMotionTransition } from '@/app/shell/motion/transitions'
 import {
@@ -29,6 +31,8 @@ type DrawerTab = 'layers' | 'design' | 'code' | 'ai'
 
 const store = useEditorStore()
 const { settings } = useI18n()
+// CI: the hosted Studio shows the AI tab only when the workspace's AI switch is on (ADR-058 §8).
+const showAI = computed(() => !isHosted() || hostedAIEnabled.value)
 
 const headerRef = ref<HTMLElement | null>(null)
 
@@ -163,6 +167,7 @@ const drawerTransition = useMotionTransition({
           </TabsTrigger>
 
           <TabsTrigger
+            v-if="showAI"
             data-test-id="mobile-ribbon-ai"
             value="ai"
             class="flex h-full cursor-pointer items-center justify-center px-3 transition-colors outline-none select-none data-[state=active]:text-accent"
@@ -197,7 +202,7 @@ const drawerTransition = useMotionTransition({
           </div>
         </TabsContent>
 
-        <TabsContent value="ai" class="mt-0 h-full data-[state=inactive]:hidden">
+        <TabsContent v-if="showAI" value="ai" class="mt-0 h-full data-[state=inactive]:hidden">
           <div data-test-id="mobile-drawer-ai" class="flex h-full flex-col">
             <ChatPanel />
           </div>

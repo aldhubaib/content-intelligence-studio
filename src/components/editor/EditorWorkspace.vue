@@ -73,9 +73,9 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
       :max-size="30"
       class="flex flex-col"
     >
-      <!-- CI: no collab / Share in the hosted Studio (ADR-058 §8); the Slots panel takes the spot. -->
+      <!-- CI: no collab / Share / account in the hosted Studio (ADR-058 §8); the Slots panel takes the spot. -->
       <div
-        v-if="!CI_STUDIO"
+        v-if="!CI_STUDIO && !hosted"
         class="flex shrink-0 items-center justify-between border-b border-border px-1.5 py-1.5"
       >
         <CollabPanel />

@@ -2,6 +2,7 @@ import type { LanguageModel } from 'ai'
 
 import { modelProviderAdapter } from '@/app/ai/providers/registry'
 import type { ModelConfig } from '@/app/ai/providers/types'
+import { hostedAIFetch } from '@/app/ci/ai'
 import type { FetchFunction } from '@/app/http/types'
 import { isTauri } from '@/app/tauri/env'
 import { tauriFetch } from '@/app/tauri/http'
@@ -26,5 +27,8 @@ function desktopFetch(): FetchFunction | undefined {
 }
 
 export function createLanguageModel(config: ModelConfig): LanguageModel {
-  return modelProviderAdapter(config.providerID).create(config, { fetch: desktopFetch() })
+  // CI: hosted mode stamps the live bearer on every proxy call.
+  return modelProviderAdapter(config.providerID).create(config, {
+    fetch: hostedAIFetch() ?? desktopFetch()
+  })
 }

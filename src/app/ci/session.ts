@@ -9,10 +9,12 @@
 import { useIntervalFn } from '@vueuse/core'
 import { computed, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 
+import { replaceAIModelSettings } from '@/app/ai/models/store'
 import { applyImportedDocument } from '@/app/document/io/imported-document'
 import type { EditorStore } from '@/app/editor/session'
 import { toast } from '@/app/shell/ui'
 
+import { hostedAIModelSettings, setHostedAIConfig } from './ai'
 import {
   StudioConflictError,
   StudioUnauthorizedError,
@@ -96,6 +98,21 @@ export interface HostedSessionOptions {
   /** Skip the brand-media fetches (unit tests). */
   skipBrandLibrary?: boolean
   skipFonts?: boolean
+  /** Receives the payload's `ai` block; defaults to pinning the AI panel's provider + models (Part F). */
+  applyAI?: (ai: StudioTemplatePayload['ai']) => void
+  /** Receives the window title; defaults to `document.title` (Part F). */
+  setTitle?: (title: string) => void
+}
+
+/** Window title in hosted mode: the template name, then the product. */
+export function hostedWindowTitle(templateName: string): string {
+  const name = templateName.trim()
+  return name ? `${name} · Content Intelligence Studio` : 'Content Intelligence Studio'
+}
+
+function setDocumentTitle(title: string): void {
+  if (typeof document === 'undefined') return
+  document.title = title
 }
 
 export function createHostedSession(options: HostedSessionOptions): HostedSession {
@@ -109,6 +126,15 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     })
   const bridge = options.bridge ?? createHostBridge(config.apiOrigin)
   const autosave = options.autosave ?? vueuseAutosaveScheduler
+  const setTitle = options.setTitle ?? setDocumentTitle
+  const setWindowTitle = (templateName: string) => setTitle(hostedWindowTitle(templateName))
+  const applyAI =
+    options.applyAI ??
+    ((ai: StudioTemplatePayload['ai']) => {
+      const models = ai.enabled ? (ai.models ?? []) : []
+      setHostedAIConfig({ enabled: ai.enabled, models })
+      replaceAIModelSettings(hostedAIModelSettings(config.apiOrigin, models))
+    })
 
   const status = shallowRef<HostedSessionStatus>({ kind: 'loading' })
   const payload = shallowRef<StudioTemplatePayload | null>(null)
@@ -139,6 +165,15 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
 
   disposers.push(
     watch(dirty, (value) => bridge.post({ type: 'studio:dirty', dirty: value }), { flush: 'sync' })
+  )
+  // Inline rename (FB-42) reaches the window title too.
+  disposers.push(
+    watch(
+      () => store.state.documentName,
+      (name) => {
+        if (status.value.kind !== 'loading') setWindowTitle(name)
+      }
+    )
   )
 
   disposers.push(
@@ -185,6 +220,8 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     payload.value = data
     version.value = data.version
     store.state.documentName = data.name
+    setWindowTitle(data.name)
+    applyAI({ enabled: data.ai.enabled, models: data.ai.models ?? [] })
 
     const load = store.preparationController.begin({ kind: 'storage-open', subject: data.name })
     try {

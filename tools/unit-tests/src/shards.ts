@@ -51,7 +51,8 @@ export const UNIT_TEST_GROUPS = {
     'tests/engine/kiwi'
   ],
   mcp: ['packages/mcp/tests', 'tests/engine/mcp'],
-  render: ['tests/engine/render'],
+  // CI: the render sidecar's suites load CanvasKit like the canvas suites do.
+  render: ['tests/engine/render', 'tests/engine/studio-render'],
   'scene-graph': [
     'packages/scene-graph/tests',
     'tests/engine/geometry',

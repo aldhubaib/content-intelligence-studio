@@ -28,6 +28,8 @@ import {
   type HarnessPermissionMode,
   type HarnessThinkingLevel
 } from '@/app/ai/models/types'
+import { hostedAIModelSettings } from '@/app/ci/ai'
+import { hostedConfig } from '@/app/ci/hosted'
 
 const LEGACY_CONNECTION_ID = 'connection-default'
 const LEGACY_MODEL_ID: AIModelProfileId = 'model-default'
@@ -227,12 +229,21 @@ function legacySettings(): AIModelSettings {
 }
 
 function loadSettings(): AIModelSettings {
+  // CI: the hosted Studio's provider is pinned to the app's proxy; the model list arrives with the template.
+  if (hostedConfig) return hostedAIModelSettings(hostedConfig.apiOrigin, [])
   return parseSettings(readAIModelSettingsStorage()) ?? legacySettings()
 }
 
 export const aiModelSettings = ref<AIModelSettings>(loadSettings())
 
-watch(aiModelSettings, (settings) => writeAIModelSettingsStorage(settings), { deep: true })
+watch(
+  aiModelSettings,
+  // CI: hosted settings are never persisted — they are derived from the payload on every load.
+  (settings) => {
+    if (!hostedConfig) writeAIModelSettingsStorage(settings)
+  },
+  { deep: true }
+)
 
 function createConnectionId(): string {
   return `connection-${crypto.randomUUID()}`

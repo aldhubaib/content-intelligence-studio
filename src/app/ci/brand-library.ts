@@ -14,6 +14,7 @@ import { SceneGraph } from '@open-pencil/scene-graph'
 import { BLACK } from '@open-pencil/scene-graph/constants'
 import { computeImageHash } from '@open-pencil/scene-graph/images'
 
+import type { ViewportSize } from '@/app/document/io/types'
 import type { EditorStore } from '@/app/editor/session'
 import { useLibraryService } from '@/app/libraries/service'
 
@@ -34,10 +35,8 @@ export interface BrandLibraryReport {
   installed: boolean
 }
 
-export interface ImageDimensions {
-  width: number
-  height: number
-}
+/** Pixel size of a decoded brand asset — the same shape as the document viewport size. */
+export type ImageDimensions = ViewportSize
 
 /** Decode enough of a PNG / JPEG / WebP / SVG header to size the component; 512² when unknown. */
 export async function measureImage(

@@ -6,6 +6,7 @@ import { computed } from 'vue'
 import { useI18n, useViewportKind } from '@open-pencil/vue'
 
 import { CI_STUDIO } from '@/app/ci/flags'
+import { isHosted } from '@/app/ci/hosted'
 import {
   settingsDialogOpen,
   registerSettingsNavigation,
@@ -54,8 +55,11 @@ const sections = computed(() =>
       { value: 'storage', label: settings.value.storage }
     ] satisfies { value: SettingsSection; label: string }[]
   ).filter(
-    // CI: the hosted Studio has no cloud storage accounts and no local MCP servers (ADR-058 §8).
-    (section) => !CI_STUDIO || (section.value !== 'storage' && section.value !== 'mcp')
+    // CI: the hosted Studio has no cloud storage accounts and no local MCP servers (ADR-058 §8);
+    // its AI provider is pinned to the app, so the provider / key section is hidden too.
+    (section) =>
+      (!CI_STUDIO || (section.value !== 'storage' && section.value !== 'mcp')) &&
+      (!isHosted() || section.value !== 'ai')
   )
 )
 function onSectionChange(section: string | number): void {

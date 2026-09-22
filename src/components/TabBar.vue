@@ -5,6 +5,7 @@ import { computed } from 'vue'
 
 import { useI18n } from '@open-pencil/vue'
 
+import { isHosted } from '@/app/ci/hosted'
 import { useTabsStore, createHomeTab } from '@/app/tabs'
 import PreparationIndicator from '@/components/preparation/tab/Indicator.vue'
 import IconButton from '@/components/ui/button/IconButton.vue'
@@ -13,6 +14,8 @@ import tabBarTheme from '@/theme/tab-bar'
 
 const { files } = useI18n()
 
+// CI: the hosted Studio edits ONE template the app opened — no new / close tab (ADR-058 §8).
+const hosted = isHosted()
 const { tabs, activeTabId, switchTab, closeTab } = useTabsStore()
 const tabBarStyles = tv(tabBarTheme)
 const baseStyles = tabBarStyles()
@@ -72,7 +75,7 @@ function onClose(e: MouseEvent, tabId: string) {
           </Tip>
         </TabsTrigger>
         <Tip
-          v-if="!tab.isHome || tabs.length > 1"
+          v-if="!hosted && (!tab.isHome || tabs.length > 1)"
           :label="files.closeTab({ name: tab.isHome ? files.newTab : tab.name })"
         >
           <button
@@ -89,7 +92,13 @@ function onClose(e: MouseEvent, tabId: string) {
         </Tip>
       </div>
     </TabsList>
-    <IconButton :label="files.newTab" size="md" data-test-id="tabbar-new" @click="createNewTab">
+    <IconButton
+      v-if="!hosted"
+      :label="files.newTab"
+      size="md"
+      data-test-id="tabbar-new"
+      @click="createNewTab"
+    >
       <icon-lucide-plus :class="baseStyles.newIcon()" />
     </IconButton>
   </TabsRoot>

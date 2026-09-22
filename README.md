@@ -27,6 +27,15 @@
 >   `STUDIO_INTERNAL_SECRET=<≥16 chars> bun run render:dev`, tests
 >   `bun run render:test`, types + lint `bun run render:check`. Contract in
 >   `studio-render/protocol.ts`.
+> - **Hosted look and AI.** In hosted mode the editor paints IBM Carbon —
+>   Gray 100 by default, Gray 10 from their **View → Theme → Light** switch
+>   (`html[data-palette]`, `src/theme/carbon.css`, IBM Plex, square corners;
+>   own storage key `content-intelligence:studio-theme`). The AI panel's
+>   provider is pinned to **Content Intelligence** — the app's
+>   `/api/studio/ai` proxy with the session bearer, models from the template
+>   payload, no key field — and the tab disappears when the workspace has AI
+>   switched off. No Share / account / new tab / close tab; the window title
+>   is the template name. Standalone (`bun run dev`, no `?doc`) is untouched.
 > - **Rebase on the next upstream release.** `git fetch upstream && git
 >   rebase v<next>` on `studio-main`, resolve only the files in
 >   `PATCHES.md`, rebuild with the flag, run `bun run check`, bump the

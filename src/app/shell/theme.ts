@@ -5,11 +5,13 @@ import type { RulerTheme } from '@open-pencil/core/canvas'
 import { parseColor } from '@open-pencil/core/color'
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
+import { hostedPalette, themeStorageKey } from '@/app/ci/theme'
 import { getActiveEditorStoreOrNull, useActiveEditorStoreRef } from '@/app/editor/active-store'
 
 export type AppTheme = 'dark' | 'light' | 'auto'
 
-const THEME_STORAGE_KEY = 'open-pencil:theme'
+// CI: the hosted Studio keeps its own preference key (default dark → Carbon Gray 100).
+const THEME_STORAGE_KEY = themeStorageKey()
 const DEFAULT_THEME: AppTheme = 'dark'
 
 const theme = useLocalStorage<AppTheme>(THEME_STORAGE_KEY, DEFAULT_THEME)
@@ -42,6 +44,10 @@ function applyTheme(value: 'dark' | 'light', setting: AppTheme): void {
   if (!IS_BROWSER || !('document' in globalThis)) return
   document.documentElement.dataset.theme = value
   document.documentElement.dataset.themeSetting = setting
+  // CI: hosted mode paints Carbon Gray 100 / Gray 10 over the upstream theme (src/theme/carbon.css).
+  const palette = hostedPalette(value)
+  if (palette) document.documentElement.dataset.palette = palette
+  else delete document.documentElement.dataset.palette
   document.documentElement.style.colorScheme = value
   updateCanvasTheme()
 }

@@ -28,6 +28,9 @@
         --loader-bg: #f3f4f6;
         --loader-fg: 32, 33, 36;
       }
+      /* CI: hosted Studio palettes (Carbon Gray 100 / Gray 10). */
+      html[data-palette='carbon-g100'] { --loader-bg: #161616; --loader-fg: 244, 244, 244; }
+      html[data-palette='carbon-g10'] { --loader-bg: #f4f4f4; --loader-fg: 22, 22, 22; }
       body { margin: 0; background: var(--loader-bg); }
       #boot-splash {
         position: fixed;

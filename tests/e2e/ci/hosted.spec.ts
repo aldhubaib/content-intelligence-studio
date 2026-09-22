@@ -26,7 +26,9 @@ function templateDocument(): unknown {
   )
 }
 
-async function installAPI(page: Page, saves: SavedBody[]) {
+type AIBlock = { enabled: boolean; models?: Array<{ id: string; label: string }> }
+
+async function installAPI(page: Page, saves: SavedBody[], ai: AIBlock = { enabled: false }) {
   let version = 3
   await page.route(`${API}/**`, async (route: Route) => {
     const request = route.request()
@@ -45,7 +47,7 @@ async function installAPI(page: Page, saves: SavedBody[]) {
             brand: null,
             fonts: [],
             requiredSlots: ['headline', 'cover', 'body'],
-            ai: { enabled: false }
+            ai
           }
         })
       }
@@ -92,11 +94,31 @@ test.describe('hosted mode', () => {
     await page.waitForTimeout(500)
     await page.screenshot({ path: test.info().outputPath('hosted-open.png') })
 
-    // The document name is the template's name.
+    // The document name is the template's name — and so is the window title (Part F).
     const name = await page.evaluate(
       () => window.openPencil?.getStore?.()?.state.documentName ?? null
     )
     expect(name).toBe('Smoke portrait')
+    await expect(page).toHaveTitle('Smoke portrait · Content Intelligence Studio')
+
+    // Part F: Carbon Gray 100 over upstream's dark theme, IBM Plex, no radius; the
+    // app owns the document (no new / close tab); AI is off for this workspace, so
+    // there is no AI tab and Settings has no provider section.
+    await expect(page.locator('html')).toHaveAttribute('data-palette', 'carbon-g100')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark')
+    expect(
+      await page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--color-canvas').trim()
+      )
+    ).toBe('#161616')
+    expect(await page.evaluate(() => getComputedStyle(document.body).fontFamily)).toMatch(
+      /IBM Plex Sans/
+    )
+    await expect(page.getByTestId('tabbar-new')).toHaveCount(0)
+    await expect(page.getByTestId('tabbar-close')).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Share' })).toHaveCount(0)
+    await expect(page.getByTestId('properties-tab-ai')).toHaveCount(0)
+    await expect(page.getByTestId('properties-tab-design')).toBeVisible()
 
     // An edit makes the session dirty …
     await page.evaluate((frameId) => {
@@ -121,11 +143,60 @@ test.describe('hosted mode', () => {
     canvas.assertNoErrors()
   })
 
+  test('Part F: with AI on, the panel is pinned to Content Intelligence and the light switch is Gray 10', async ({
+    page
+  }) => {
+    await installAPI(page, [], { enabled: true, models: [{ id: 'gpt-4o', label: 'GPT-4o' }] })
+    const canvas = new CanvasHelper(page)
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await expect(page.getByTestId('ci-slots-status')).toHaveText('All changes saved.')
+
+    // The AI tab exists, opens straight into the composer (no "connect a provider"
+    // placeholder, no key field) and the one model is the pinned one.
+    const aiTab = page.getByTestId('properties-tab-ai')
+    await expect(aiTab).toBeVisible()
+    await aiTab.click()
+    await expect(page.getByTestId('provider-setup')).toHaveCount(0)
+    await expect(page.getByText('Content Intelligence · GPT-4o').first()).toBeVisible()
+    await page.screenshot({ path: test.info().outputPath('hosted-ai-g100.png') })
+
+    // Their theme switch: Light → Carbon Gray 10 (own storage key), Dark → Gray 100.
+    // Seeded the way the upstream theme tests do it (`storageState`), then a fresh
+    // boot — a plain reload has no token any more; the host re-mints one on a new src.
+    await page.context().addInitScript(() => {
+      // oxlint-disable-next-line open-pencil/no-direct-storage-access
+      localStorage.setItem('content-intelligence:studio-theme', 'light')
+    })
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await expect(page.locator('html')).toHaveAttribute('data-palette', 'carbon-g10')
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+    expect(
+      await page.evaluate(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--color-canvas').trim()
+      )
+    ).toBe('#f4f4f4')
+    await expect(page.getByTestId('ci-slots-status')).toHaveText('All changes saved.')
+    await page.screenshot({ path: test.info().outputPath('hosted-g10.png') })
+    // Upstream's own preference was never touched.
+    expect(
+      await page.evaluate(() => {
+        // oxlint-disable-next-line open-pencil/no-direct-storage-access
+        return localStorage.getItem('open-pencil:theme')
+      })
+    ).toBeNull()
+    canvas.assertNoErrors()
+  })
+
   test('standalone boot (no ?doc) is untouched', async ({ page }) => {
     const canvas = new CanvasHelper(page)
     await page.goto('/')
     await canvas.waitForInit()
     await expect(page.getByTestId('ci-slots-panel')).toHaveCount(0)
     await expect(page.getByTestId('canvas-element')).toBeVisible()
+    await expect(page.locator('html')).not.toHaveAttribute('data-palette', /.+/)
+    await expect(page.getByTestId('tabbar-new')).toBeVisible()
+    await expect(page.getByTestId('properties-tab-ai')).toBeVisible()
   })
 })

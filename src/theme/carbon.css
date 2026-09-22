@@ -1,0 +1,125 @@
+/* CI: IBM Carbon palettes for the hosted Studio (ADR-058 §8, Track E3c Part F).
+ *
+ * Two palettes, added next to upstream's dark / light and never replacing
+ * them: `carbon-g100` (Gray 100 — the Content Intelligence app's own theme)
+ * and `carbon-g10` (Gray 10). `src/app/shell/theme.ts` writes the palette to
+ * `html[data-palette]` in hosted mode only; `data-theme` keeps its upstream
+ * `dark` / `light` value so every upstream selector still applies. Values are
+ * Carbon v11 tokens (https://carbondesignsystem.com/elements/color/tokens)
+ * mapped onto the OpenPencil token names from `src/app.css`. */
+
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans-arabic/400.css';
+@import '@fontsource/ibm-plex-sans-arabic/500.css';
+@import '@fontsource/ibm-plex-sans-arabic/600.css';
+
+/* Shared by both palettes: Carbon is rectangular and set in IBM Plex. */
+html[data-theme][data-palette^='carbon-'] {
+  --radius-xs: 0;
+  --radius-sm: 0;
+  --radius-md: 0;
+  --radius-lg: 0;
+  --radius-xl: 0;
+  --radius-2xl: 0;
+  --radius-3xl: 0;
+  --radius-4xl: 0;
+  --radius: 0;
+}
+
+html[data-theme][data-palette^='carbon-'] body {
+  font-family:
+    'IBM Plex Sans',
+    'IBM Plex Sans Arabic',
+    system-ui,
+    -apple-system,
+    sans-serif;
+}
+
+/* Gray 100 — background $background, panels $layer-01 / $layer-02, text
+ * $text-primary / $text-secondary, $interactive, $focus white, borders
+ * $border-subtle-02. */
+html[data-theme][data-palette='carbon-g100'] {
+  --color-panel: #262626;
+  --color-panel-secondary: #161616;
+  --color-panel-field: #393939;
+  --color-panel-field-hover: #474747;
+  --color-panel-focus: #ffffff;
+  --color-panel-selected: #0f62fe;
+  --color-panel-selected-muted: #525252;
+  --color-canvas: #161616;
+  --color-border: #525252;
+  --color-hover: #333333;
+  --color-accent: #4589ff;
+  --color-surface: #f4f4f4;
+  --color-muted: #c6c6c6;
+  --color-input: #262626;
+  --color-component: #a56eff;
+  --color-warning-bg: rgb(241 194 27 / 0.1);
+  --color-warning-border: rgb(241 194 27 / 0.3);
+  --color-warning-text: #f1c21b;
+  --color-warning-action: #fddc69;
+  --color-success: #42be65;
+  --color-primary: #78a9ff;
+  --color-inverted: #161616;
+  --color-error: #ff8389;
+  --color-error-bg: rgb(250 77 86 / 0.1);
+  --color-error-border: rgb(250 77 86 / 0.4);
+  --color-success-bg: #198038;
+  --color-success-bg-hover: #0e6027;
+  --color-code-tag: #78a9ff;
+  --color-code-attribute: #be95ff;
+  --color-code-string: #42be65;
+  --color-code-number: #ff8389;
+  --color-code-punctuation: #8d8d8d;
+  --color-checkerboard: #393939;
+  --color-checkerboard-muted: #525252;
+  --color-ruler-bg: rgb(38, 38, 38);
+  --color-ruler-tick: rgb(111, 111, 111);
+  --color-ruler-text: rgb(141, 141, 141);
+  --color-ruler-label: rgb(244, 244, 244);
+}
+
+/* Gray 10 — background $background (#f4f4f4), panels $layer-01 white,
+ * fields $field-01, $focus / $interactive Blue 60. */
+html[data-theme][data-palette='carbon-g10'] {
+  --color-panel: #ffffff;
+  --color-panel-secondary: #f4f4f4;
+  --color-panel-field: #f4f4f4;
+  --color-panel-field-hover: #e8e8e8;
+  --color-panel-focus: #0f62fe;
+  --color-panel-selected: #0f62fe;
+  --color-panel-selected-muted: #e0e0e0;
+  --color-canvas: #f4f4f4;
+  --color-border: #e0e0e0;
+  --color-hover: #e8e8e8;
+  --color-accent: #0f62fe;
+  --color-primary: #0f62fe;
+  --color-inverted: #ffffff;
+  --color-surface: #161616;
+  --color-muted: #525252;
+  --color-input: #ffffff;
+  --color-component: #8a3ffc;
+  --color-warning-bg: rgb(241 194 27 / 0.14);
+  --color-warning-border: rgb(241 194 27 / 0.32);
+  --color-warning-text: #684e00;
+  --color-warning-action: #8e6a00;
+  --color-success: #198038;
+  --color-error: #da1e28;
+  --color-error-bg: rgb(218 30 40 / 0.08);
+  --color-error-border: rgb(218 30 40 / 0.28);
+  --color-success-bg: #198038;
+  --color-success-bg-hover: #0e6027;
+  --color-code-tag: #0043ce;
+  --color-code-attribute: #6929c4;
+  --color-code-string: #198038;
+  --color-code-number: #da1e28;
+  --color-code-punctuation: #6f6f6f;
+  --color-checkerboard: #e0e0e0;
+  --color-checkerboard-muted: #c6c6c6;
+  --color-ruler-bg: rgb(255, 255, 255);
+  --color-ruler-tick: rgb(141, 141, 141);
+  --color-ruler-text: rgb(82, 82, 82);
+  --color-ruler-label: rgb(255, 255, 255);
+}

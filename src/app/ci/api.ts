@@ -18,7 +18,8 @@ export interface StudioTemplatePayload {
   fonts: StudioFont[]
   /** Slots the bound formats require (`headline`, `cover`, …); a missing one is a warning in the Slots panel. */
   requiredSlots: string[]
-  ai: { enabled: boolean }
+  /** AI panel switch for the workspace + the models the proxy offers (Part F); `models` is empty when disabled. */
+  ai: { enabled: boolean; models?: Array<{ id: string; label: string }> }
   /** Present when the app holds an autosaved draft newer than `version`. */
   draft?: { document: SerializedDocument; savedAt: string } | null
 }
