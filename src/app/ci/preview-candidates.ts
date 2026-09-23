@@ -14,8 +14,10 @@ import {
   StudioUnauthorizedError,
   type StudioAPI,
   type StudioBindingsVocabulary,
-  type StudioPreviewCandidate,
-  type StudioTemplatePayload
+  type StudioBrandAssetKind,
+  type StudioDesignContent,
+  type StudioDocumentPayload,
+  type StudioPreviewCandidate
 } from './api'
 import { preselectedCandidate } from './preview'
 import { createPreviewOverlay, type PreviewOverlay } from './preview-overlay'
@@ -82,8 +84,12 @@ export function createPreviewCandidates(
 
 export interface SessionPreviewOptions {
   vocabulary: () => StudioBindingsVocabulary
-  payload: () => StudioTemplatePayload | null
+  payload: () => StudioDocumentPayload | null
   onUnauthorized: () => void
+  /** Track E3d-c (design mode): the `content:*` text is the post's and cannot be edited here. */
+  lockContentText?: () => boolean
+  onLockedEdit?: (nodeId: string) => void
+  preferredBrandAsset?: (kind: StudioBrandAssetKind) => string | null
 }
 
 /** The whole preview lane of a hosted session: overlay + candidates + `?preview=` preselect. */
@@ -92,7 +98,26 @@ export interface SessionPreview {
   readonly candidates: PreviewCandidates
   /** Start at None (every open), then preselect `?preview=<id>` once the list is in. */
   open(previewCandidateId: string | null | undefined): void
+  /** Track E3d-c (design mode): the post's content is the ONE fixed preview — no menu, no candidates list. */
+  openFixed(content: StudioDesignContent): void
   dispose(): void
+}
+
+/** The post's content shaped as the overlay's candidate — `id` = the Arabic candidate, image from the app. */
+export function fixedContentCandidate(content: StudioDesignContent): StudioPreviewCandidate {
+  return {
+    id: content.candidateId,
+    title: content.title,
+    subtitle: content.subtitle,
+    body: content.body,
+    cta: content.cta,
+    articleUrl: content.articleUrl,
+    bodyChunks: content.bodyChunks,
+    format: null,
+    formatLabel: null,
+    approvedAt: '',
+    imageUrl: content.imageUrl
+  }
 }
 
 export function createSessionPreview(
@@ -103,7 +128,10 @@ export function createSessionPreview(
   const overlay = createPreviewOverlay(store, {
     vocabulary: options.vocabulary,
     sampleText: () => options.payload()?.preview?.sampleText ?? null,
-    loadImage: (url) => api.fetchBytes(url)
+    loadImage: (url) => api.fetchBytes(url),
+    lockContentText: options.lockContentText,
+    onLockedEdit: options.onLockedEdit,
+    preferredBrandAsset: options.preferredBrandAsset
   })
   const candidates = createPreviewCandidates(api, {
     url: () => options.payload()?.preview?.candidatesUrl ?? null,
@@ -122,6 +150,9 @@ export function createSessionPreview(
     open(previewCandidateId) {
       overlay.setContent({ kind: 'none' })
       if (previewCandidateId) void preselect(previewCandidateId)
+    },
+    openFixed(content) {
+      overlay.setContent({ kind: 'candidate', candidate: fixedContentCandidate(content) })
     },
     dispose() {
       disposed = true

@@ -32,6 +32,10 @@ export const PREVIEW_COPY = {
   brandReset: 'Reset to default',
   brandHelp: (binding: string) =>
     `Previews only — the layer stays bound to ${binding}; the pipeline picks the image at render time.`,
+  /** Track E3d-c (design mode): the title-row words where **Preview with ▾** would be, and the locked-text hint. */
+  designFixed: 'Content from the post',
+  designFixedSr: 'The post’s text fills the content layers; it is not part of the design document',
+  designLockedHint: 'Text comes from the post — edit the draft on Plan.',
   brandEmpty: {
     'user-image': 'No user image yet — add one in Settings › Brand kit.',
     'company-logo-light': 'No light logo yet — add one in Settings › Brand kit.',
@@ -40,7 +44,8 @@ export const PREVIEW_COPY = {
 } as const
 
 /** The `content:*` slot names that carry text, mapped to the content field they show. */
-const TEXT_SLOT_FIELD: Partial<Record<string, keyof StudioPreviewContent>> = {
+type PreviewTextField = 'title' | 'subtitle' | 'body' | 'cta' | 'articleUrl'
+const TEXT_SLOT_FIELD: Partial<Record<string, PreviewTextField>> = {
   title: 'title',
   subtitle: 'subtitle',
   body: 'body',
@@ -137,7 +142,9 @@ export function remapStyleRuns(
 /**
  * The preview changes for ONE `content:*` text layer — `text` (+ remapped
  * `styleRuns`); the font and the box stay (no auto-shrink). A `repeat` frame
- * shows the first body chunk: the whole body truncated to the layer's box.
+ * shows the first body chunk: the app's own `bodyChunks[0]` when the content
+ * carries the chunks (Track E3d-c design mode — the same words the render
+ * will use), else the whole body truncated to the layer's box.
  * Null when the slot has nothing to show (empty value, image slot).
  */
 export function contentPreviewChanges(
@@ -149,7 +156,8 @@ export function contentPreviewChanges(
   let text = contentTextFor(slot, content)
   if (text === null) return null
   if (slot === 'body' && options.role === 'repeat') {
-    text = truncateWithEllipsis(text, estimateBoxChars(node, options.maxChars))
+    const chunk = content.bodyChunks?.[0]?.trim()
+    text = chunk ? chunk : truncateWithEllipsis(text, estimateBoxChars(node, options.maxChars))
   }
   const current = typeof node.text === 'string' ? node.text : ''
   const changes: Partial<SceneNode> = { text }

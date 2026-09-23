@@ -15,11 +15,25 @@ describe('parseHostedConfig', () => {
     )
     expect(config).toEqual({
       templateId: '3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f',
+      kind: 'template',
+      documentId: '3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f',
       workspaceSlug: 'nizek',
       apiOrigin: 'https://app.example.com',
       initialToken: 'abc.def',
       previewCandidateId: null
     })
+  })
+
+  test('E3d-c: ?kind=design opens a design; any other kind word is a configuration error', () => {
+    const base =
+      '?doc=3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f&ws=nizek&token=t&api=https://app.example.com'
+    expect(parseHostedConfig(`${base}&kind=design`)).toMatchObject({
+      kind: 'design',
+      documentId: '3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f',
+      templateId: '3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f'
+    })
+    expect(parseHostedConfig(`${base}&kind=template`)?.kind).toBe('template')
+    expect(() => parseHostedConfig(`${base}&kind=poster`)).toThrow(/kind/)
   })
 
   test('E3d-b1: ?preview= carries a candidate id only when it looks like one', () => {

@@ -20,6 +20,13 @@
 //     renamed into a binding picks the current selection up;
 //   • a recreated / duplicated layer that carries preview values (undo of a
 //     delete, ⌘D on an overlaid layer) is corrected back to the document values.
+//
+// Track E3d-c (design mode, `lockContentText`): the post's text is FIXED on
+// the `content:*` text layers — a selected layer keeps showing it, in-place
+// editing is refused (`onLockedEdit` says why) and a text write that lands
+// anyway is put back to the document's placeholder. A `preferredBrandAsset`
+// (the person's user-image choice for the output) is what an unnamed
+// `brand:user-image` layer previews with.
 
 import { isEqual, pick } from 'es-toolkit'
 import { shallowRef, type Ref } from 'vue'
@@ -33,6 +40,7 @@ import type { EditorStore } from '@/app/editor/session'
 import type {
   StudioBindingsVocabulary,
   StudioBrandAsset,
+  StudioBrandAssetKind,
   StudioPreviewContent,
   StudioRoleName
 } from './api'
@@ -52,6 +60,12 @@ export interface PreviewOverlayOptions {
   /** Bytes of a candidate image URL (bearer, app origin); absent → images are never previewed. */
   loadImage?: (url: string) => Promise<Uint8Array>
   log?: (message: string, error: unknown) => void
+  /** Track E3d-c: the text on `content:*` text layers comes from the post and cannot be edited here. */
+  lockContentText?: () => boolean
+  /** Told (node id) when a locked layer's text edit was refused / put back. */
+  onLockedEdit?: (nodeId: string) => void
+  /** Track E3d-c: the asset an unnamed `brand:<kind>` layer previews with before the gallery default (the output's user-image choice). */
+  preferredBrandAsset?: (kind: StudioBrandAssetKind) => string | null
 }
 
 export interface PreviewOverlay {
@@ -71,6 +85,8 @@ export interface PreviewOverlay {
   brandAssetFor(layerId: string): StudioBrandAsset | null
   /** True while the layer shows a preview value. */
   isPreviewed(nodeId: string): boolean
+  /** Track E3d-c: true for a `content:*` text layer while content text is locked (design mode). */
+  isLocked(nodeId: string): boolean
   /** Re-read the graph and paint / lift as needed. */
   sync(): void
   /** The document WITHOUT the overlay — what every save sends. */
@@ -140,6 +156,8 @@ export function createPreviewOverlay(
   const originals = new Map<string, Partial<SceneNode>>()
   /** The overlay values currently on each node. */
   const applied = new Map<string, Partial<SceneNode>>()
+  /** Track E3d-c: `source.editedFields` of a locked layer before any refused write, per node. */
+  const editedFieldsBefore = new Map<string, readonly string[]>()
   /** Image hashes the overlay put into `graph.images`. */
   const previewHashes = new Set<string>()
   const disposers: Array<() => void> = []
@@ -153,6 +171,8 @@ export function createPreviewOverlay(
     const missing = keys.filter((key) => !Object.hasOwn(previous, key))
     if (missing.length) Object.assign(previous, structuredClone(pick(node, missing)))
     originals.set(node.id, previous)
+    if (!editedFieldsBefore.has(node.id))
+      editedFieldsBefore.set(node.id, [...node.source.editedFields])
   }
 
   function ensureImage(bytes: Uint8Array): string {
@@ -212,7 +232,11 @@ export function createPreviewOverlay(
     return cleaned
   }
 
+  const locked = () => options.lockContentText?.() ?? false
+
   function textSuppressed(nodeId: string): boolean {
+    // Design mode: the post's text stays on the layer while it is selected — it IS what the design shows.
+    if (locked()) return false
     return store.state.selectedIds.has(nodeId) || store.state.editingTextId === nodeId
   }
 
@@ -268,12 +292,28 @@ export function createPreviewOverlay(
     }
     const b = binding ?? bindingOfNode(layerId)
     if (b?.kind !== 'brand') return null
+    // Track E3d-c: an unnamed layer previews with the output's own choice before the gallery default.
+    if (!b.name && options.preferredBrandAsset) {
+      const preferred = options.preferredBrandAsset(b.slotKind as StudioBrandAssetKind)
+      const asset = preferred
+        ? brandAssets.value.find((a) => a.id === preferred && a.kind === b.slotKind)
+        : undefined
+      if (asset) return asset
+    }
     return resolveBrandAsset(brandAssets.value, b)
   }
 
   function bindingOfNode(nodeId: string): Binding | null {
     const node = graph().getNode(nodeId)
     return node ? bindingOf(node, options.vocabulary()) : null
+  }
+
+  /** A `content:<text slot>` TEXT layer — the layers design mode locks. */
+  function isLockedTextLayer(nodeId: string): boolean {
+    const node = graph().getNode(nodeId)
+    if (node?.type !== 'TEXT') return false
+    const b = bindingOf(node, options.vocabulary())
+    return b?.kind === 'content' && b.slot !== 'image'
   }
 
   function apply(node: SceneNode, desired: Partial<SceneNode>): void {
@@ -360,9 +400,50 @@ export function createPreviewOverlay(
     }
   }
 
+  /**
+   * Design mode (Track E3d-c): a text write on a locked layer is refused — the
+   * document keeps its placeholder, the layer keeps showing the post's text.
+   */
+  function refuseLockedWrite(
+    id: string,
+    changes: Partial<SceneNode>,
+    current: Partial<SceneNode>
+  ): void {
+    const original = originals.get(id) ?? {}
+    const putBack: Partial<SceneNode> = {}
+    for (const key of ['text', 'styleRuns'] as const) {
+      if (!Object.hasOwn(changes, key) || !Object.hasOwn(original, key)) continue
+      if (sameValue(changes[key], current[key]) || sameValue(changes[key], original[key])) continue
+      Reflect.set(putBack, key, structuredClone(original[key]))
+    }
+    if (Object.keys(putBack).length > 0) {
+      // Through the preview channel: no second `node:updated`, no history entry,
+      // and the edit mark the refused write left on `source.editedFields` is undone.
+      const node = graph().getNode(id)
+      const before = editedFieldsBefore.get(id)
+      if (node && before) {
+        const refusedKeys = Object.keys(putBack)
+        putBack.source = {
+          ...node.source,
+          editedFields: node.source.editedFields.filter(
+            (key) => before.includes(key) || !refusedKeys.includes(key)
+          )
+        }
+      }
+      applied.delete(id)
+      graph().updateNodePreview(id, putBack)
+      options.onLockedEdit?.(id)
+    }
+    sync()
+  }
+
   /** A document write on an overlaid key: the overlay's own echo, or a real change to adopt. */
   function onNodeUpdated(id: string, changes: Partial<SceneNode>): void {
     const current = applied.get(id)
+    if (current && locked() && isLockedTextLayer(id)) {
+      refuseLockedWrite(id, changes, current)
+      return
+    }
     if (current) {
       const original = originals.get(id) ?? {}
       let corrected: Partial<SceneNode> = {}
@@ -444,6 +525,7 @@ export function createPreviewOverlay(
   }
 
   function reset(): void {
+    editedFieldsBefore.clear()
     originals.clear()
     applied.clear()
     previewHashes.clear()
@@ -512,6 +594,7 @@ export function createPreviewOverlay(
     },
     brandAssetFor: (layerId) => brandAssetFor(layerId),
     isPreviewed: (nodeId) => applied.has(nodeId),
+    isLocked: (nodeId) => locked() && isLockedTextLayer(nodeId),
     sync,
     serialize,
     dispose() {

@@ -5,14 +5,24 @@
 // lived bearer minted by the app) and `api` (the app origin every request
 // goes to). When `doc` is absent the Studio behaves exactly like upstream
 // OpenPencil, so `bun run dev` keeps working for us.
+//
+// Track E3d-c: `kind=design` opens a DESIGN's own copy instead of a template —
+// same iframe, the `designs/<id>` API, design mode in the session (no
+// autosave, read-only name, the post's text locked into `content:*`).
 
 import { shallowRef } from 'vue'
 
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
+export type HostedDocumentKind = 'template' | 'design'
+
 export interface HostedConfig {
-  /** Template id the Studio edits — the only document this session may load or save. */
+  /** Template id the Studio edits — the only document this session may load or save. In design mode the design id (alias of `documentId`). */
   readonly templateId: string
+  /** Track E3d-c: what `doc` names — a template (default) or a design's own copy. */
+  readonly kind: HostedDocumentKind
+  /** The id `doc` carried — a template id or a design id by `kind`. */
+  readonly documentId: string
   /** Workspace slug, informational (the token already scopes the API). */
   readonly workspaceSlug: string
   /** App origin, e.g. `https://content-intelligence.up.railway.app`. Always `https:` in production. */
@@ -50,8 +60,14 @@ export function parseHostedConfig(search: string): HostedConfig | null {
     throw new Error('Hosted Studio: `api` is not a valid origin')
   }
   const preview = params.get('preview')
+  const kindParam = params.get('kind')
+  if (kindParam !== null && kindParam !== 'template' && kindParam !== 'design')
+    throw new Error('Hosted Studio: `kind` must be template or design')
+  const kind: HostedDocumentKind = kindParam === 'design' ? 'design' : 'template'
   return {
     templateId: doc,
+    kind,
+    documentId: doc,
     workspaceSlug: ws,
     apiOrigin: origin,
     initialToken: token,
@@ -84,6 +100,11 @@ export const hostedConfigError: string | null = initial.error
 /** True when this page is embedded by the Content Intelligence app. */
 export function isHosted(): boolean {
   return hostedConfig !== null
+}
+
+/** Track E3d-c: true when the hosted document is a design's own copy (`?kind=design`). */
+export function isHostedDesign(): boolean {
+  return hostedConfig?.kind === 'design'
 }
 
 /** The current bearer token; the host rotates it through `host:token`. */

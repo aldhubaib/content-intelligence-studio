@@ -19,7 +19,7 @@ import IconChevronRight from '~icons/lucide/chevron-right'
 
 import { vTestId, useI18n } from '@open-pencil/vue'
 
-import { isHosted } from '@/app/ci/hosted'
+import { isHosted, isHostedDesign } from '@/app/ci/hosted'
 import { useEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
 import { useAppMenu } from '@/app/shell/menu/app-menu'
@@ -48,6 +48,8 @@ import { IS_TAURI } from '@/constants'
 const store = useEditorStore()
 // CI: Draft mark · format · save state next to the name in the hosted Studio (FB-45).
 const hosted = isHosted()
+// CI: Track E3d-c — a design's name is the app's read-only `<idea> · <format> · v{n}`; no inline rename.
+const nameLocked = isHostedDesign()
 
 const { rename, editingName, startRename, commitRename } = useDocumentNameRename(store)
 const nameInput = templateRef<HTMLInputElement>('nameInput')
@@ -85,8 +87,10 @@ const subMenuCls = useMenuUI({ content: 'min-w-44' })
       <span
         v-else
         data-test-id="app-document-name"
-        class="min-w-0 flex-1 cursor-default truncate rounded px-1 py-0.5 text-xs text-surface hover:bg-hover"
-        @dblclick="startRename"
+        class="min-w-0 flex-1 cursor-default truncate rounded px-1 py-0.5 text-xs text-surface"
+        :class="nameLocked ? '' : 'hover:bg-hover'"
+        :data-name-locked="nameLocked ? 'true' : undefined"
+        @dblclick="nameLocked ? undefined : startRename()"
         >{{ store.state.documentName }}</span
       >
       <HostedTitleMeta v-if="hosted && !editingName" />

@@ -118,6 +118,8 @@ export interface StudioPreviewContent {
   body: string
   cta: string
   articleUrl: string
+  /** Track E3d-c (design mode): the body as the app's `planRender` chunks it — `repeat` frames show `bodyChunks[0]`. */
+  bodyChunks?: string[]
 }
 
 export interface StudioPreviewCandidate extends StudioPreviewContent {
@@ -161,6 +163,45 @@ export interface StudioFont {
   url: string
 }
 
+/**
+ * Track E3d-c — GET /api/studio/designs/{id}: a design's OWN copy. The shared
+ * blocks (format, formats, brand, fonts, bindings, ai, preview) are the
+ * template's; `content` is the post's fixed text and image; `name` is
+ * read-only (`<idea> · <format> · v{n}`); there is no draft slot and no
+ * proposal.
+ */
+export interface StudioDesignContent extends StudioPreviewContent {
+  bodyChunks: string[]
+  /** Bearer-gated image on the app origin for `content:image`, or null. */
+  imageUrl: string | null
+  draftId: string
+  candidateId: string
+}
+
+export interface StudioDesignPayload extends Omit<
+  StudioTemplatePayload,
+  'collection' | 'draft' | 'proposal'
+> {
+  kind: 'design'
+  designId: string
+  template: { id: string; key: string; label: string; version: number }
+  content: StudioDesignContent
+  /** The person's user-image choice for this output (E3d-b2), previewed on `brand:user-image` layers. */
+  userImageAssetId: string | null
+  /** True once the row carries its own edited copy. */
+  ownCopy: boolean
+  renderStatus: 'pending' | 'rendered' | 'failed'
+  /** Where **Back to post** lands (app path). */
+  back: { href: string }
+  draft: null
+}
+
+export type StudioDocumentPayload = StudioTemplatePayload | StudioDesignPayload
+
+export function isDesignPayload(payload: StudioDocumentPayload): payload is StudioDesignPayload {
+  return (payload as { kind?: unknown }).kind === 'design'
+}
+
 /** PUT /api/studio/templates/{id} — the two document saves. */
 export interface StudioSaveRequest {
   document: SerializedDocument
@@ -172,6 +213,9 @@ export interface StudioSaveRequest {
 export interface StudioSaveResponse {
   version: number
   updatedAt: string
+  /** Track E3d-c: a design save births a NEW design row — its id; the session moves to it. */
+  designId?: string
+  renderStatus?: 'pending' | 'rendered' | 'failed'
 }
 
 /** PUT `{ kind: "duplicate" }` — **Save as new template** (FB-45): the same document as a NEW template of the same format and collection. */
@@ -191,9 +235,12 @@ export class StudioAPIError extends Error {
   }
 }
 
-/** 409 on PUT — someone saved a newer version. */
+/** 409 on PUT — someone saved a newer version. `currentDesignId` (Track E3d-c) names the design row that is current now. */
 export class StudioConflictError extends StudioAPIError {
-  constructor(readonly currentVersion: number | null) {
+  constructor(
+    readonly currentVersion: number | null,
+    readonly currentDesignId: string | null = null
+  ) {
     super('Someone saved a newer version.', 409, 'conflict')
     this.name = 'StudioConflictError'
   }
@@ -209,14 +256,17 @@ export class StudioUnauthorizedError extends StudioAPIError {
 
 export interface StudioAPIOptions {
   apiOrigin: string
-  templateId: string
+  /** The template id — or, with `kind: 'design'`, the design id. A function is read on every request (a design save moves the session to the new row). */
+  templateId: string | (() => string)
+  /** Track E3d-c: which route family the document lives under. Default `template`. */
+  kind?: 'template' | 'design'
   /** Read on every request so a rotated token is picked up without re-creating the client. */
   token: () => string
   fetch?: typeof fetch
 }
 
 export interface StudioAPI {
-  loadTemplate(signal?: AbortSignal): Promise<StudioTemplatePayload>
+  loadTemplate(signal?: AbortSignal): Promise<StudioDocumentPayload>
   saveTemplate(body: StudioSaveRequest, signal?: AbortSignal): Promise<StudioSaveResponse>
   /** Inline rename in the title bar → `renameTemplate` on the app (FB-45); no version is written. */
   renameTemplate(name: string, signal?: AbortSignal): Promise<{ name: string }>
@@ -241,7 +291,10 @@ const NATIVE_FETCH: typeof fetch | null =
 
 export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
   const doFetch = options.fetch ?? NATIVE_FETCH ?? fetch
-  const base = `${options.apiOrigin}/api/studio/templates/${encodeURIComponent(options.templateId)}`
+  const family = options.kind === 'design' ? 'designs' : 'templates'
+  const documentId = () =>
+    typeof options.templateId === 'function' ? options.templateId() : options.templateId
+  const base = () => `${options.apiOrigin}/api/studio/${family}/${encodeURIComponent(documentId())}`
 
   function assertOwnOrigin(url: string): URL {
     const parsed = new URL(url, options.apiOrigin)
@@ -268,14 +321,19 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
   }
 
   async function readError(response: Response): Promise<StudioAPIError> {
-    type ErrorBody = { error?: { code?: string; message?: string }; currentVersion?: number }
+    type ErrorBody = {
+      error?: { code?: string; message?: string }
+      currentVersion?: number
+      currentDesignId?: string
+    }
     let body: ErrorBody | null = null
     try {
       body = (await response.json()) as ErrorBody
     } catch {
       body = null
     }
-    if (response.status === 409) return new StudioConflictError(body?.currentVersion ?? null)
+    if (response.status === 409)
+      return new StudioConflictError(body?.currentVersion ?? null, body?.currentDesignId ?? null)
     const message =
       body?.error?.message ??
       `The Studio API answered ${response.status} ${response.statusText}`.trim()
@@ -283,7 +341,7 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
   }
 
   async function put<T>(body: unknown, signal?: AbortSignal): Promise<T> {
-    const response = await request(base, {
+    const response = await request(base(), {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -296,9 +354,9 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
   return {
     apiOrigin: options.apiOrigin,
     async loadTemplate(signal) {
-      const response = await request(base, { method: 'GET', signal })
+      const response = await request(base(), { method: 'GET', signal })
       if (!response.ok) throw await readError(response)
-      return (await response.json()) as StudioTemplatePayload
+      return (await response.json()) as StudioDocumentPayload
     },
     saveTemplate(body, signal) {
       return put<StudioSaveResponse>(body, signal)

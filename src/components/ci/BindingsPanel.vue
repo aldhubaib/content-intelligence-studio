@@ -42,7 +42,7 @@ const statusLine = computed(() => {
   const s = status.value
   switch (s.kind) {
     case 'loading':
-      return 'Opening the template…'
+      return session.value?.isDesign ? 'Opening the design…' : 'Opening the template…'
     case 'saving':
       return s.saveKind === 'version' ? 'Saving version…' : 'Saving draft…'
     case 'conflict':
@@ -50,9 +50,11 @@ const statusLine = computed(() => {
     case 'error':
       return s.message
     default:
-      return session.value?.dirty.value
-        ? 'Unsaved changes — autosaves every 30 s.'
-        : 'All changes saved.'
+      if (!session.value?.dirty.value) return 'All changes saved.'
+      // Track E3d-c: a design has no autosave — Save version is the only save.
+      return session.value.isDesign
+        ? 'Unsaved changes — Save version (⌘S) keeps them as a new version.'
+        : 'Unsaved changes — autosaves every 30 s.'
   }
 })
 

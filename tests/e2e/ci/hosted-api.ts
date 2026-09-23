@@ -9,6 +9,9 @@ import { type Page, type Route } from '@playwright/test'
 
 export const API = 'https://app.ci.test'
 export const TEMPLATE_ID = 'tpl-hosted-smoke'
+/** Track E3d-c: the design whose OWN copy the design spec opens, and the row its first save births. */
+export const DESIGN_ID = 'des-hosted-smoke'
+export const DESIGN_ID_NEXT = 'des-hosted-smoke-2'
 /** The `cover` frame inside `tests/fixtures/ci/hosted-template.json`. */
 export const FRAME_ID = '0:3'
 
@@ -184,4 +187,112 @@ export async function installAppPages(page: Page): Promise<void> {
       body: '<title>Templates · app</title><h1 data-app-page="templates">Templates</h1>'
     })
   )
+}
+
+// Track E3d-c: the post's content behind `GET /api/studio/designs/<id>` — the
+// template document above with the design's facts; a PUT `version` answers a
+// NEW design id the session must move to.
+export const DESIGN_CONTENT = {
+  title: 'أسعار الإيجار في الكويت ترتفع',
+  subtitle: 'LinkedIn insight',
+  body: 'ارتفعت أسعار الإيجار هذا العام. إليك ما يعنيه ذلك للمستأجرين.',
+  cta: 'اقرأ المزيد',
+  articleUrl: null,
+  bodyChunks: ['ارتفعت أسعار الإيجار هذا العام.', 'إليك ما يعنيه ذلك للمستأجرين.'],
+  imageUrl: null,
+  draftId: 'draft-1',
+  candidateId: 'cand-1'
+}
+export const DESIGN_NAME = 'Rent prices · LinkedIn Post · v2'
+export const DESIGN_BACK = '/w/nizek/plan?item=req-1'
+
+export interface DesignAPIOptions {
+  fixture?: string
+  ownCopy?: boolean
+}
+
+export async function installDesignAPI(
+  page: Page,
+  saves: SavedBody[],
+  options: DesignAPIOptions = {}
+) {
+  let currentId = DESIGN_ID
+  let version = 2
+  let ownCopy = options.ownCopy ?? false
+  await page.route(`${API}/**`, async (route: Route) => {
+    const request = route.request()
+    const url = new URL(request.url())
+    const match = /^\/api\/studio\/designs\/([^/]+)$/.exec(url.pathname)
+    if (match) {
+      if (request.headers()['authorization'] !== 'Bearer smoke-token') {
+        return route.fulfill({ status: 401, json: { error: 'unauthorized' } })
+      }
+      if (match[1] !== currentId) {
+        return route.fulfill({ status: 404, json: { error: 'not found' } })
+      }
+      if (request.method() === 'GET') {
+        return route.fulfill({
+          json: {
+            kind: 'design',
+            designId: currentId,
+            document: templateDocument(options.fixture),
+            name: DESIGN_NAME.replace(/v\d+$/, `v${version}`),
+            version,
+            updatedAt: '2026-09-22T10:00:00Z',
+            format: {
+              ...FORMAT,
+              id: 'linkedin_post',
+              label: 'LinkedIn post',
+              platform: 'LINKEDIN'
+            },
+            formats: [FORMAT, CAROUSEL],
+            template: { id: TEMPLATE_ID, key: 'kuwaiti_card', label: 'Kuwaiti card', version: 3 },
+            content: DESIGN_CONTENT,
+            userImageAssetId: null,
+            ownCopy,
+            renderStatus: 'rendered',
+            back: { href: DESIGN_BACK },
+            brand: null,
+            fonts: [],
+            bindings: {
+              vocabulary: VOCABULARY,
+              report: {
+                version: 'bindings-v3',
+                usable: { single: true, carousel: false },
+                statusWords: 'Usable'
+              }
+            },
+            ai: { enabled: false },
+            draft: null
+          }
+        })
+      }
+      if (request.method() === 'PUT') {
+        const body = request.postDataJSON() as SavedBody
+        saves.push(body)
+        if (body.kind !== 'version') {
+          return route.fulfill({ status: 400, json: { error: 'no_draft_slot' } })
+        }
+        if (body.baseVersion !== version) {
+          return route.fulfill({
+            status: 409,
+            json: { error: 'conflict', currentVersion: version, currentDesignId: currentId }
+          })
+        }
+        version += 1
+        currentId = DESIGN_ID_NEXT
+        ownCopy = true
+        return route.fulfill({
+          json: {
+            kind: 'version',
+            designId: currentId,
+            version,
+            renderStatus: 'pending',
+            updatedAt: '2026-09-22T10:01:00Z'
+          }
+        })
+      }
+    }
+    return route.fulfill({ status: 404, json: { error: 'not found' } })
+  })
 }

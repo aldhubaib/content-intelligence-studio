@@ -60,6 +60,8 @@ function asset(
 interface Fixture {
   store: EditorStore
   overlay: PreviewOverlay
+  /** Track E3d-c: node ids whose text edit the locked overlay refused. */
+  refused: string[]
   ids: Record<'title' | 'body' | 'image' | 'brand' | 'repeatBody' | 'cover' | 'repeat', string>
   /** The document before any preview — every save must equal it. */
   before: string
@@ -80,7 +82,9 @@ afterEach(() => {
   fixture = null
 })
 
-function build(options: { withImage?: boolean } = {}): Fixture {
+function build(
+  options: { withImage?: boolean; lock?: boolean; preferredUserImage?: string | null } = {}
+): Fixture {
   const store = createEditorStore()
   const graph = new SceneGraph()
   const page = graph.getPages()[0]
@@ -134,9 +138,15 @@ function build(options: { withImage?: boolean } = {}): Fixture {
   store.setDocumentSource(store.state.documentName, 'ci-hosted')
   const before = JSON.stringify(serializeGraph(store.graph, ENGINE))
   const loads: string[] = []
+  const refused: string[] = []
   const overlay = createPreviewOverlay(store, {
     vocabulary: () => DEFAULT_VOCABULARY,
     sampleText: () => SAMPLE,
+    lockContentText: options.lock ? () => true : undefined,
+    onLockedEdit: (id) => refused.push(id),
+    preferredBrandAsset: options.preferredUserImage
+      ? (kind) => (kind === 'user-image' ? (options.preferredUserImage ?? null) : null)
+      : undefined,
     loadImage: options.withImage
       ? async (url) => {
           loads.push(url)
@@ -148,6 +158,7 @@ function build(options: { withImage?: boolean } = {}): Fixture {
   fixture = {
     store,
     overlay,
+    refused,
     ids: {
       title: title.id,
       body: body.id,
@@ -390,5 +401,64 @@ describe('brand preview', () => {
     expect(node(store, ids.title).text).toBe('Title placeholder')
     expect(node(store, ids.brand).fills?.some((f) => f.type === 'IMAGE')).toBe(false)
     expect(JSON.stringify(serializeGraph(store.graph, ENGINE))).toBe(before)
+  })
+})
+
+describe('design mode — locked content text (Track E3d-c)', () => {
+  test('a selected locked layer keeps showing the post; a text write is put back and reported', () => {
+    const { store, overlay, ids, before, refused } = build({ lock: true })
+    overlay.setContent({ kind: 'candidate', candidate: CANDIDATE })
+    expect(node(store, ids.title).text).toBe(CANDIDATE.title)
+    expect(overlay.isLocked(ids.title)).toBe(true)
+    expect(overlay.isLocked(ids.image)).toBe(false)
+    expect(overlay.isLocked(ids.brand)).toBe(false)
+
+    // Selecting the layer does NOT lift the preview (a template session would show the placeholder).
+    store.select([ids.title])
+    expect(node(store, ids.title).text).toBe(CANDIDATE.title)
+
+    // A write that lands anyway is refused: the layer shows the post again, the document is the placeholder.
+    store.updateNode(ids.title, { text: 'my own words' })
+    expect(refused).toEqual([ids.title])
+    expect(node(store, ids.title).text).toBe(CANDIDATE.title)
+    expect(saved(overlay)).toBe(before)
+    expect(JSON.parse(saved(overlay))).toEqual(JSON.parse(before))
+  })
+
+  test('a box or name change on a locked layer is still an edit; images stay editable', () => {
+    const { store, overlay, ids, refused } = build({ lock: true })
+    overlay.setContent({ kind: 'candidate', candidate: CANDIDATE })
+    store.updateNode(ids.title, { width: 800 })
+    expect(refused).toEqual([])
+    expect(node(store, ids.title).width).toBe(800)
+    store.updateNode(ids.image, { width: 500 })
+    expect(node(store, ids.image).width).toBe(500)
+    expect(refused).toEqual([])
+  })
+
+  test("without the lock the same write is adopted as the layer's new text", () => {
+    const { store, overlay, ids, refused } = build()
+    overlay.setContent({ kind: 'candidate', candidate: CANDIDATE })
+    store.select([ids.title])
+    store.updateNodeWithUndo(ids.title, { text: 'my own words' }, 'Edit text')
+    expect(refused).toEqual([])
+    expect(node(store, ids.title).text).toBe('my own words')
+    expect(overlay.isLocked(ids.title)).toBe(false)
+  })
+
+  test("an unnamed brand:user-image layer previews the output's chosen asset before the gallery default", () => {
+    const { store, overlay, ids, before } = build({ lock: true, preferredUserImage: 'alt' })
+    const hero = asset('hero', 'user-image', true, 'Hero')
+    const alt = asset('alt', 'user-image', false, 'Alt')
+    overlay.setBrandAssets([
+      { asset: hero, bytes: PNG },
+      { asset: alt, bytes: PNG_2 }
+    ])
+    expect(overlay.brandAssetFor(ids.brand)?.id).toBe('alt')
+    expect(node(store, ids.brand).fills?.[0]).toMatchObject({ imageHash: computeImageHash(PNG_2) })
+    // A person's explicit choice still wins.
+    overlay.setBrandChoice(ids.brand, 'hero')
+    expect(overlay.brandAssetFor(ids.brand)?.id).toBe('hero')
+    expect(saved(overlay)).toBe(before)
   })
 })

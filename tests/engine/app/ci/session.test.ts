@@ -6,12 +6,14 @@ import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
 import {
   StudioConflictError,
   type StudioAPI,
+  type StudioDesignPayload,
+  type StudioDocumentPayload,
   type StudioFormat,
   type StudioTemplatePayload
 } from '@/app/ci/api'
 import { DEFAULT_VOCABULARY } from '@/app/ci/bindings'
 import { serializeGraph } from '@/app/ci/document'
-import { hostedToken } from '@/app/ci/hosted'
+import { hostedToken, type HostedConfig } from '@/app/ci/hosted'
 import type { HostBridge, HostToStudioMessage, StudioToHostMessage } from '@/app/ci/protocol'
 import {
   createHostedSession,
@@ -27,9 +29,19 @@ import { createEditorStore, type EditorStore } from '@/app/editor/session'
 
 const CONFIG = {
   templateId: 'tpl-1',
+  kind: 'template' as const,
+  documentId: 'tpl-1',
   workspaceSlug: 'nizek',
   apiOrigin: 'https://app.example.com',
   initialToken: 'tok'
+}
+
+/** Track E3d-c: the same session over a design's own copy. */
+const DESIGN_CONFIG = {
+  ...CONFIG,
+  kind: 'design' as const,
+  templateId: 'des-1',
+  documentId: 'des-1'
 }
 
 const FORMAT: StudioFormat = {
@@ -76,8 +88,71 @@ function payload(overrides: Partial<StudioTemplatePayload> = {}): StudioTemplate
   }
 }
 
-function fakeAPI(data: StudioTemplatePayload) {
+/** A design payload: the template's document with a titled cover + a repeat frame, the post's content, no draft. */
+function designPayload(overrides: Partial<StudioDesignPayload> = {}): StudioDesignPayload {
+  const graph = templateGraph()
+  const page = graph.getPages()[0]
+  const cover = graph.getChildren(page.id)[0]
+  graph.createNode('TEXT', cover.id, {
+    name: 'content:title',
+    text: 'Title placeholder',
+    width: 900,
+    height: 120,
+    fontSize: 48
+  })
+  graph.createNode('TEXT', cover.id, {
+    name: 'content:body',
+    text: 'Body placeholder',
+    width: 900,
+    height: 600,
+    fontSize: 28
+  })
+  const repeat = graph.createNode('FRAME', page.id, {
+    name: 'repeat',
+    x: 1200,
+    width: 1080,
+    height: 1350
+  })
+  graph.createNode('TEXT', repeat.id, {
+    name: 'content:body',
+    text: 'Body placeholder',
+    width: 900,
+    height: 600,
+    fontSize: 28
+  })
+  const base = payload({ document: serializeGraph(graph, '0.15.1') })
+  const { collection: _collection, draft: _draft, proposal: _proposal, ...shared } = base
+  return {
+    ...shared,
+    kind: 'design',
+    designId: 'des-1',
+    name: 'Rent prices · LinkedIn Post · v2',
+    version: 2,
+    template: { id: 'tpl-1', key: 'kuwaiti_card', label: 'Kuwaiti card', version: 4 },
+    content: {
+      title: 'أسعار الإيجار ترتفع',
+      subtitle: 'LinkedIn insight',
+      body: 'الجملة الأولى. الجملة الثانية أطول قليلاً. وثالثة تكمل الفقرة.',
+      cta: 'اقرأ المزيد',
+      articleUrl: null,
+      bodyChunks: ['الجزء الأول', 'الجزء الثاني'],
+      imageUrl: null,
+      draftId: 'draft-1',
+      candidateId: 'cand-1'
+    },
+    userImageAssetId: null,
+    ownCopy: false,
+    renderStatus: 'rendered',
+    back: { href: '/w/nizek/plan?item=req-1' },
+    draft: null,
+    ...overrides
+  }
+}
+
+function fakeAPI(data: StudioDocumentPayload) {
   const saves: Array<{ kind: string; baseVersion: number; name?: string }> = []
+  /** Track E3d-c: extra fields of the next save answers (a design save names the new row). */
+  let saveExtra: { designId?: string; renderStatus?: 'pending' } = {}
   /** The document of every save, as sent — the preview must never be in it. */
   const savedDocuments: unknown[] = []
   const renames: string[] = []
@@ -111,7 +186,7 @@ function fakeAPI(data: StudioTemplatePayload) {
         throw error
       }
       nextVersion += 1
-      return { version: nextVersion, updatedAt: 'later' }
+      return { version: nextVersion, updatedAt: 'later', ...saveExtra }
     },
     fetchBytes: async () => new Uint8Array(),
     aiChatURL: () => `${CONFIG.apiOrigin}/api/studio/ai/chat`
@@ -125,6 +200,9 @@ function fakeAPI(data: StudioTemplatePayload) {
     jsonFetches,
     failNextWith(error: Error) {
       failNext = error
+    },
+    answerSavesWith(extra: { designId?: string; renderStatus?: 'pending' }) {
+      saveExtra = extra
     },
     answerCandidatesWith(value: unknown) {
       candidates = value
@@ -209,9 +287,9 @@ afterEach(() => {
 })
 
 async function booted(
-  data = payload(),
+  data: StudioDocumentPayload = payload(),
   options: {
-    config?: Partial<typeof CONFIG> & { previewCandidateId?: string | null }
+    config?: Partial<HostedConfig> & { previewCandidateId?: string | null }
     beforeLoad?: (remote: ReturnType<typeof fakeAPI>) => void
   } = {}
 ) {
@@ -233,6 +311,7 @@ async function booted(
   const clock = fakeScheduler()
   const aiApplied: Array<StudioTemplatePayload['ai']> = []
   const titles: string[] = []
+  const hints: string[] = []
   session = createHostedSession({
     config: { ...CONFIG, ...options.config },
     store,
@@ -242,10 +321,22 @@ async function booted(
     skipBrandLibrary: true,
     skipFonts: true,
     applyAI: (ai) => aiApplied.push(ai),
-    setTitle: (title) => titles.push(title)
+    setTitle: (title) => titles.push(title),
+    hint: (message) => hints.push(message)
   })
   await session.load()
-  return { store, remote, host, clock, session, aiApplied, titles, fits }
+  return { store, remote, host, clock, session, aiApplied, titles, fits, hints }
+}
+
+function textNamed(store: EditorStore, frameName: string, name: string): SceneNode {
+  const frame = [...store.graph.getAllNodes()].find(
+    (n) => n.type === 'FRAME' && n.name === frameName
+  )
+  const found = frame
+    ? store.graph.getChildren(frame.id).find((n) => n.type === 'TEXT' && n.name === name)
+    : undefined
+  if (!found) throw new Error(`Expected ${frameName}/${name}`)
+  return found
 }
 
 describe('hosted session', () => {
@@ -587,5 +678,118 @@ describe('hosted session', () => {
       expect(session.preview.overlay.content.value).toEqual({ kind: 'none' })
       expect(titleOf(store).text).toBe('Title placeholder')
     })
+  })
+})
+
+describe('design mode (Track E3d-c)', () => {
+  async function bootedDesign(
+    data = designPayload(),
+    beforeLoad?: (remote: ReturnType<typeof fakeAPI>) => void
+  ) {
+    return booted(data, { config: DESIGN_CONFIG, beforeLoad })
+  }
+
+  test('opens the design, names it read-only, paints the post as fixed content and never autosaves', async () => {
+    const { store, host, clock, session, remote } = await bootedDesign()
+    expect(session.isDesign).toBe(true)
+    expect(session.documentId.value).toBe('des-1')
+    expect(store.state.documentName).toBe('Rent prices · LinkedIn Post · v2')
+    expect(session.design.value?.designId).toBe('des-1')
+    expect(host.posted).toContainEqual({
+      type: 'studio:ready',
+      templateId: 'des-1',
+      documentId: 'des-1',
+      kind: 'design',
+      version: 2
+    })
+    // The post's words on the cover; the first design-copy chunk on the repeat frame.
+    expect(textNamed(store, 'cover', 'content:title').text).toBe('أسعار الإيجار ترتفع')
+    expect(textNamed(store, 'repeat', 'content:body').text).toBe('الجزء الأول')
+    expect(session.preview.overlay.isLocked(textNamed(store, 'cover', 'content:title').id)).toBe(
+      true
+    )
+    // Not an edit, not dirty, and the store's document still holds the placeholders.
+    expect(session.dirty.value).toBe(false)
+    expect(store.hasUnsavedChanges()).toBe(false)
+    const doc = JSON.stringify(session.preview.overlay.serialize('0.15.1'))
+    expect(doc).toContain('Title placeholder')
+    expect(doc).not.toContain('أسعار الإيجار')
+    // No autosave clock in design mode; a tick writes nothing.
+    expect(clock.started).toBe(0)
+    clock.tick()
+    await settle()
+    expect(remote.saves).toEqual([])
+    expect(await session.saveDraft()).toBe(false)
+    expect(await session.saveAsNewTemplate()).toBe(false)
+    expect(remote.duplicates).toEqual([])
+  })
+
+  test('a locked text edit is refused with the hint; a layout edit is a real change', async () => {
+    const { store, session, hints } = await bootedDesign()
+    const title = textNamed(store, 'cover', 'content:title')
+    store.select([title.id])
+    store.updateNodeWithUndo(title.id, { text: 'my words' }, 'Edit text')
+    expect(textNamed(store, 'cover', 'content:title').text).toBe('أسعار الإيجار ترتفع')
+    expect(hints).toEqual(['Text comes from the post — edit the draft on Plan.'])
+    expect(JSON.stringify(session.preview.overlay.serialize('0.15.1'))).not.toContain('my words')
+    // Entering in-place text editing on the locked layer is closed at the door.
+    store.state.editingTextId = title.id
+    expect(store.state.editingTextId).toBeNull()
+
+    store.updateNodeWithUndo(title.id, { width: 700 }, 'Resize')
+    expect(session.dirty.value).toBe(true)
+    expect(textNamed(store, 'cover', 'content:title').width).toBe(700)
+  })
+
+  test('Save version writes a NEW design row: the session moves to it, the host learns the id, the name follows', async () => {
+    const { store, host, session, remote, titles } = await bootedDesign(designPayload(), (remote) =>
+      remote.answerSavesWith({ designId: 'des-2', renderStatus: 'pending' })
+    )
+    const title = textNamed(store, 'cover', 'content:title')
+    store.updateNodeWithUndo(title.id, { width: 700 }, 'Resize')
+    expect(await session.saveVersion()).toBe(true)
+    expect(remote.saves).toEqual([{ kind: 'version', baseVersion: 2, name: undefined }])
+    // The saved document holds the placeholder, never the post's words.
+    expect(JSON.stringify(remote.savedDocuments[0])).toContain('Title placeholder')
+    expect(JSON.stringify(remote.savedDocuments[0])).not.toContain('أسعار الإيجار')
+    expect(session.documentId.value).toBe('des-2')
+    expect(session.version.value).toBe(3)
+    expect(session.design.value).toMatchObject({ designId: 'des-2', ownCopy: true, version: 3 })
+    expect(store.state.documentName).toBe('Rent prices · LinkedIn Post · v3')
+    expect(titles.at(-1)).toBe('Rent prices · LinkedIn Post · v3 · Content Intelligence Studio')
+    expect(host.posted.at(-1)).toEqual({
+      type: 'studio:saved',
+      kind: 'version',
+      version: 3,
+      designId: 'des-2'
+    })
+    expect(session.dirty.value).toBe(false)
+    // The overlay still paints the post after the move.
+    expect(textNamed(store, 'cover', 'content:title').text).toBe('أسعار الإيجار ترتفع')
+  })
+
+  test('a 409 that names the current design retargets the session to it', async () => {
+    const { store, session, remote } = await bootedDesign()
+    const title = textNamed(store, 'cover', 'content:title')
+    store.updateNodeWithUndo(title.id, { width: 700 }, 'Resize')
+    remote.failNextWith(new StudioConflictError(5, 'des-9'))
+    expect(await session.saveVersion()).toBe(false)
+    expect(session.status.value).toEqual({ kind: 'conflict', serverVersion: 5 })
+    expect(session.documentId.value).toBe('des-9')
+  })
+
+  test('Back to post asks once when dirty and navigates back; the app URL is the post', async () => {
+    const { store, host, session } = await bootedDesign()
+    expect(await session.backToPost()).toBe(true)
+    expect(host.posted.at(-1)).toEqual({ type: 'studio:navigate', to: 'back' })
+
+    const title = textNamed(store, 'cover', 'content:title')
+    store.updateNodeWithUndo(title.id, { width: 700 }, 'Resize')
+    const cancelled = session.backToPost()
+    await settle()
+    expect(closePrompt.value).toEqual({ documentName: 'Rent prices · LinkedIn Post · v2' })
+    answerClosePrompt('cancel')
+    expect(await cancelled).toBe(false)
+    expect(host.posted.filter((m) => m.type === 'studio:navigate')).toHaveLength(1)
   })
 })

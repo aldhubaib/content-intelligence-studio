@@ -2,10 +2,13 @@
 // CI: the hosted title bar's facts next to the inline-editable name (FB-45):
 // the Draft mark (FB-42), the read-only format line and OpenPencil-style save
 // state driven by the session ("Saved · v2" / "Unsaved changes" / "Saving…").
+// Track E3d-c (design mode): no Draft mark, no Preview with ▾ — the words
+// **Content from the post** say what fills the content layers.
 import { computed } from 'vue'
 
 import { hostedSession } from '@/app/ci/boot'
 import { formatLine } from '@/app/ci/frame-presets'
+import { PREVIEW_COPY } from '@/app/ci/preview'
 import { isDraftName, saveStateWords } from '@/app/ci/session'
 import { useEditorStore } from '@/app/editor/active-store'
 // CI: Track E3d-b1 — **Preview with ▾** sits at the right end of the title row.
@@ -14,7 +17,8 @@ import Tip from '@/components/ui/overlay/Tip.vue'
 
 const store = useEditorStore()
 const session = computed(() => hostedSession.value)
-const draft = computed(() => isDraftName(store.state.documentName))
+const isDesign = computed(() => session.value?.isDesign ?? false)
+const draft = computed(() => !isDesign.value && isDraftName(store.state.documentName))
 const format = computed(() => {
   const f = session.value?.payload.value?.format
   return f ? formatLine(f) : null
@@ -51,6 +55,13 @@ const saveWords = computed(() => saveStateWords(saveState.value))
       :data-kind="saveState.kind"
       >{{ saveWords }}</span
     >
-    <ContentPreviewMenu v-if="session && saveState.kind !== 'loading'" />
+    <span
+      v-if="isDesign"
+      class="hidden shrink-0 truncate text-muted @[360px]:inline"
+      data-test-id="ci-content-fixed"
+      :title="PREVIEW_COPY.designFixedSr"
+      >{{ PREVIEW_COPY.designFixed }}</span
+    >
+    <ContentPreviewMenu v-else-if="session && saveState.kind !== 'loading'" />
   </div>
 </template>

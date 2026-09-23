@@ -9,35 +9,21 @@
 // templates, Save as new template, Open in new tab.
 
 import { hostedSession } from './boot'
-import { isHosted } from './hosted'
+import { isHosted, isHostedDesign } from './hosted'
+import { HOSTED_MENU_LABELS, hidesMenuItem } from './menu-rules'
 
-export const HOSTED_HIDDEN_MENU_IDS: ReadonlySet<string> = new Set([
-  'new',
-  'open',
-  'open-recent',
-  'open-storage-workspace',
-  'save-as',
-  'export-fig',
-  'autosave',
-  'close'
-])
-
-/** Entries that exist ONLY in the hosted Studio (FB-45). */
-export const HOSTED_ONLY_MENU_IDS: ReadonlySet<string> = new Set([
-  'ci-back-to-templates',
-  'ci-save-as-new-template',
-  'ci-open-in-new-tab'
-])
-
-export const HOSTED_MENU_LABELS: Readonly<Record<string, string>> = {
-  save: 'Save version',
-  'export-selection': 'Export image…'
-}
+export {
+  DESIGN_HIDDEN_MENU_IDS,
+  DESIGN_ONLY_MENU_IDS,
+  HOSTED_HIDDEN_MENU_IDS,
+  HOSTED_MENU_LABELS,
+  HOSTED_ONLY_MENU_IDS,
+  hidesMenuItem
+} from './menu-rules'
 
 /** True when a menu entry must not be rendered in this page. */
 export function hostedHidesMenuItem(id: string): boolean {
-  if (isHosted()) return HOSTED_HIDDEN_MENU_IDS.has(id)
-  return HOSTED_ONLY_MENU_IDS.has(id)
+  return hidesMenuItem(id, isHosted() ? (isHostedDesign() ? 'design' : 'template') : null)
 }
 
 /** A hosted-mode label override, or `null` to keep the translated upstream label. */
@@ -48,6 +34,7 @@ export function hostedMenuLabel(id: string): string | null {
 /** Actions behind the hosted-only entries; no-ops before the session exists. */
 export const hostedMenuActions: Readonly<Record<string, () => void>> = {
   'ci-back-to-templates': () => void hostedSession.value?.backToTemplates(),
+  'ci-back-to-post': () => void hostedSession.value?.backToPost(),
   'ci-save-as-new-template': () => void hostedSession.value?.saveAsNewTemplate(),
   'ci-open-in-new-tab': () => hostedSession.value?.openInNewTab()
 }

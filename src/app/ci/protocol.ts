@@ -13,15 +13,28 @@
 
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
+// Track E3d-c (design mode): `navigate { to: 'back' }` is File › Back to post
+// (the host knows where the post lives), `saved.designId` names the NEW design
+// row a save birthed, `ready.documentId` / `ready.kind` say what opened
+// (`templateId` stays for older hosts).
+
 export type StudioNavigateTarget =
   | { to: 'templates' }
   | { to: 'template'; templateId: string }
   | { to: 'new-tab' }
+  | { to: 'back' }
 
 export type StudioToHostMessage =
-  | { type: 'studio:ready'; templateId: string; version: number; proposal?: boolean }
+  | {
+      type: 'studio:ready'
+      templateId: string
+      version: number
+      proposal?: boolean
+      documentId?: string
+      kind?: 'template' | 'design'
+    }
   | { type: 'studio:dirty'; dirty: boolean }
-  | { type: 'studio:saved'; version: number; kind: 'draft' | 'version' }
+  | { type: 'studio:saved'; version: number; kind: 'draft' | 'version'; designId?: string }
   | { type: 'studio:renamed'; name: string }
   | { type: 'studio:error'; message: string }
   | { type: 'studio:token-expiring' }

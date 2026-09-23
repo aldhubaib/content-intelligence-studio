@@ -9,6 +9,17 @@
 // menu's Back / Save as new template / Open in new tab and the title bar's
 // inline rename live here too (FB-45). Nothing here touches `.fig`: the wire
 // format is the app's `openpencil-scene-graph` JSON, end to end.
+//
+// Track E3d-c — DESIGN MODE (`config.kind === 'design'`): the document is a
+// design's OWN copy behind `GET|PUT /api/studio/designs/<id>`. No autosave and
+// no draft slot (Save version is the only write, ⌘S included), the name is
+// read-only (`<idea> · <format> · v{n}` from the app), the post's text is a
+// FIXED preview on the `content:*` layers (locked — "Text comes from the
+// post — edit the draft on Plan."), `repeat` frames show `bodyChunks[0]`, the
+// output's user-image choice previews on `brand:user-image`. A save births a
+// NEW design row: the session moves to its id (API + token), the host is told
+// through `studio:saved { designId }`. File › Back to post replaces Back to
+// templates; Save as new template is gone.
 
 import { useIntervalFn } from '@vueuse/core'
 import { computed, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
@@ -26,7 +37,12 @@ import {
   StudioConflictError,
   StudioUnauthorizedError,
   createStudioAPI,
+  isDesignPayload,
   type StudioAPI,
+  type StudioDesignPayload,
+  type StudioDocumentPayload,
+  type StudioSaveRequest,
+  type StudioSaveResponse,
   type StudioTemplatePayload
 } from './api'
 import {
@@ -37,11 +53,17 @@ import {
 } from './bindings'
 import { installBrandLibrary, type BrandLibraryReport } from './brand-library'
 import { HOSTED_COPY } from './copy'
-import { deserializeGraph } from './document'
+import { deserializeGraph, type SerializedDocument } from './document'
 import { installHostedFonts, type HostedFontReport } from './fonts'
 import { hostedToken, scrubTokenFromLocation, type HostedConfig } from './hosted'
+import { PREVIEW_COPY } from './preview'
 import { createSessionPreview, type SessionPreview } from './preview-candidates'
-import { createHostBridge, type HostBridge, type StudioNavigateTarget } from './protocol'
+import {
+  createHostBridge,
+  type HostBridge,
+  type StudioNavigateTarget,
+  type StudioToHostMessage
+} from './protocol'
 
 export const AUTOSAVE_INTERVAL_MS = 30_000
 /** The engine version this Studio is; written into every saved envelope. */
@@ -90,11 +112,19 @@ export type HostedSessionStatus =
   | { kind: 'conflict'; serverVersion: number | null }
   | { kind: 'error'; message: string }
 
+type SaveKind = StudioSaveRequest['kind']
+
 export interface HostedSession {
   readonly config: HostedConfig
   readonly api: StudioAPI
   readonly status: Ref<HostedSessionStatus>
-  readonly payload: Ref<StudioTemplatePayload | null>
+  readonly payload: Ref<StudioDocumentPayload | null>
+  /** Track E3d-c: true when the document is a design's own copy. */
+  readonly isDesign: boolean
+  /** Track E3d-c: the id the session edits NOW — after a design save, the new row's id. */
+  readonly documentId: Ref<string>
+  /** Track E3d-c: the design payload's own facts, null in template mode. */
+  readonly design: ComputedRef<StudioDesignPayload | null>
   readonly version: Ref<number>
   readonly dirty: ComputedRef<boolean>
   /** Live Bindings report over the graph (FB-44 §3). */
@@ -117,6 +147,8 @@ export interface HostedSession {
   saveAsNewTemplate(): Promise<boolean>
   /** File → Back to templates: the upstream unsaved-changes prompt, then leave. */
   backToTemplates(): Promise<boolean>
+  /** Track E3d-c — File → Back to post (design mode): the same prompt, then the post. */
+  backToPost(): Promise<boolean>
   /** File → Open in new tab. */
   openInNewTab(): void
   /** Bring one node into view. */
@@ -149,6 +181,8 @@ export interface HostedSessionOptions {
   skipFonts?: boolean
   /** Receives the payload's `ai` block; defaults to pinning the AI panel's provider + models (Part F). */
   applyAI?: (ai: StudioTemplatePayload['ai']) => void
+  /** Track E3d-c: injected toast for the locked-text hint (tests); defaults to the shell toast. */
+  hint?: (message: string) => void
   /** Receives the window title; defaults to `document.title` (Part F). */
   setTitle?: (title: string) => void
 }
@@ -166,11 +200,14 @@ function setDocumentTitle(title: string): void {
 
 export function createHostedSession(options: HostedSessionOptions): HostedSession {
   const { config, store } = options
+  const isDesign = config.kind === 'design'
+  const documentId = shallowRef(config.documentId)
   const api =
     options.api ??
     createStudioAPI({
       apiOrigin: config.apiOrigin,
-      templateId: config.templateId,
+      templateId: () => documentId.value,
+      kind: config.kind,
       token: () => hostedToken.value
     })
   const bridge = options.bridge ?? createHostBridge(config.apiOrigin)
@@ -186,7 +223,11 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     })
 
   const status = shallowRef<HostedSessionStatus>({ kind: 'loading' })
-  const payload = shallowRef<StudioTemplatePayload | null>(null)
+  const payload = shallowRef<StudioDocumentPayload | null>(null)
+  const design = computed<StudioDesignPayload | null>(() =>
+    payload.value && isDesignPayload(payload.value) ? payload.value : null
+  )
+  const hint = options.hint ?? ((message: string) => toast.info(message))
   const version = shallowRef(0)
   const fontReport = shallowRef<HostedFontReport | null>(null)
   const brandReport = shallowRef<BrandLibraryReport | null>(null)
@@ -213,13 +254,42 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   })
 
   // Track E3d-b1 (FB-44 §6): preview values live in the overlay only; `preview.serialize` is what every save sends.
+  const disposers_early: Array<() => void> = []
+  // Track E3d-c: in design mode the overlay is the post's FIXED content — locked text, the output's user image.
+  let lastHintAt = 0
   const preview = createSessionPreview(store, api, {
     vocabulary: () => vocabulary.value,
     payload: () => payload.value,
-    onUnauthorized: () => bridge.post({ type: 'studio:token-expiring' })
+    onUnauthorized: () => bridge.post({ type: 'studio:token-expiring' }),
+    lockContentText: () => isDesign,
+    onLockedEdit: () => {
+      const now = Date.now()
+      if (now - lastHintAt < 1500) return
+      lastHintAt = now
+      hint(PREVIEW_COPY.designLockedHint)
+    },
+    preferredBrandAsset: (kind) =>
+      kind === 'user-image' ? (design.value?.userImageAssetId ?? null) : null
   })
+  // Design mode: in-place text editing of a locked layer is refused at the door (no change → no history).
+  if (isDesign) {
+    disposers_early.push(
+      watch(
+        () => store.state.editingTextId,
+        (id) => {
+          if (!id || !preview.overlay.isLocked(id)) return
+          store.commitTextEdit()
+          const now = Date.now()
+          if (now - lastHintAt < 1500) return
+          lastHintAt = now
+          hint(PREVIEW_COPY.designLockedHint)
+        },
+        { flush: 'sync' }
+      )
+    )
+  }
 
-  const disposers: Array<() => void> = []
+  const disposers: Array<() => void> = [...disposers_early]
   let saving: Promise<boolean> | null = null
   let stopAutosave: (() => void) | null = null
   let disposed = false
@@ -246,6 +316,8 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       (name) => {
         if (status.value.kind === 'loading') return
         setWindowTitle(name)
+        // Design mode: the name is the app's read-only `<idea> · <format> · v{n}` — never renamed from here.
+        if (isDesign) return
         const trimmed = name.trim()
         if (!trimmed || trimmed === lastSentName) return
         if (renameTimer) clearTimeout(renameTimer)
@@ -293,7 +365,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   async function load(): Promise<void> {
     scrubTokenFromLocation()
     status.value = { kind: 'loading' }
-    let data: StudioTemplatePayload
+    let data: StudioDocumentPayload
     try {
       data = await api.loadTemplate()
     } catch (error) {
@@ -324,14 +396,13 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       }
       load.signal.throwIfAborted()
 
-      const source = data.draft?.document ?? data.document
-      const graph = deserializeGraph(source)
+      const graph = deserializeGraph(documentToOpen(data))
       load.update({ phase: 'decoding', detail: data.name })
       await applyImportedDocument(store, graph, load)
       load.signal.throwIfAborted()
       // A restored draft is what the person sees but not yet a version: leave the
       // change tracker dirty so the next autosave / Save version persists it.
-      if (!data.draft) markSaved()
+      if (!restoredDraft(data)) markSaved()
       // Model v3 on load (FB-44 §2): legacy `slot:` names become `content:` names and
       // an unnamed first artboard becomes `cover`. Through the store, so the document
       // is dirty and the next save writes the names back.
@@ -364,20 +435,14 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       throw error
     }
 
-    if (data.draft) toast.info(HOSTED_COPY.draftRestored(formatTime(data.draft.savedAt)))
+    const draft = restoredDraft(data)
+    if (draft) toast.info(HOSTED_COPY.draftRestored(formatTime(draft.savedAt)))
 
     status.value = { kind: 'ready' }
     // FB-45: focus lands in the Studio so ⌘S / shortcuts work without a click.
     focusCanvas()
-    bridge.post({
-      type: 'studio:ready',
-      templateId: config.templateId,
-      version: version.value,
-      // CI: Track E4 — the host shows its one-time "Proposed by AI" banner from this flag.
-      ...(data.proposal ? { proposal: true } : {})
-    })
-
-    preview.open(config.previewCandidateId)
+    bridge.post(readyMessage(data))
+    openPreview(data)
 
     if (data.brand && !options.skipBrandLibrary) {
       const brand = data.brand
@@ -396,9 +461,11 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
         })
     }
 
-    stopAutosave = autosave.start(() => {
-      if (dirty.value && !saving && status.value.kind === 'ready') void saveDraft()
-    })
+    // Design mode has no draft slot: Save version is the only write.
+    if (!isDesign)
+      stopAutosave = autosave.start(() => {
+        if (dirty.value && !saving && status.value.kind === 'ready') void saveDraft()
+      })
   }
 
   /**
@@ -414,7 +481,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     }
   }
 
-  async function save(kind: 'draft' | 'version', baseVersion = version.value): Promise<boolean> {
+  async function save(kind: SaveKind, baseVersion = version.value): Promise<boolean> {
     if (saving) return saving
     if (status.value.kind === 'loading' || status.value.kind === 'error') return false
     const previous = status.value
@@ -423,20 +490,18 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     saving = (async () => {
       try {
         const document = preview.overlay.serialize(STUDIO_ENGINE_VERSION)
-        const response = await api.saveTemplate({
-          document,
-          baseVersion,
-          kind,
-          name: store.state.documentName
-        })
+        const response = await api.saveTemplate(saveRequest(document, baseVersion, kind))
         version.value = response.version
         if (store.state.sceneVersion === sceneVersionAtCapture) markSaved()
         status.value = { kind: 'ready' }
-        bridge.post({ type: 'studio:saved', version: response.version, kind })
+        if (isDesign && response.designId) moveToDesign(response.designId, response.version)
+        bridge.post(savedMessage(kind, response))
         if (kind === 'version') toast.info(HOSTED_COPY.savedVersion)
         return true
       } catch (error) {
         if (error instanceof StudioConflictError) {
+          // Design mode: the lineage moved on — the next save goes to the row that is current now.
+          if (isDesign && error.currentDesignId) documentId.value = error.currentDesignId
           status.value = { kind: 'conflict', serverVersion: error.currentVersion }
           const serverVersion = error.currentVersion
           toast.error(HOSTED_COPY.conflict, {
@@ -474,11 +539,91 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   }
 
   function saveDraft(): Promise<boolean> {
+    if (isDesign) return Promise.resolve(false)
     if (status.value.kind === 'conflict') return Promise.resolve(false)
     return save('draft')
   }
 
+  /**
+   * Track E3d-c: a design save wrote a NEW row — the session now edits that
+   * one (API base, token subject, name suffix), the document itself unchanged.
+   */
+  function moveToDesign(designId: string, newVersion: number): void {
+    documentId.value = designId
+    const current = payload.value
+    if (current && isDesignPayload(current)) {
+      const name = current.name.replace(/ · v\d+$/u, ` · v${newVersion}`)
+      payload.value = {
+        ...current,
+        designId,
+        ownCopy: true,
+        version: newVersion,
+        name,
+        renderStatus: 'pending'
+      }
+      lastSentName = name
+      store.state.documentName = name
+      setWindowTitle(name)
+    }
+  }
+
+  /** The autosaved draft a template payload carries; a design has none (Track E3d-c). */
+  function restoredDraft(data: StudioDocumentPayload): StudioTemplatePayload['draft'] | null {
+    return isDesignPayload(data) ? null : (data.draft ?? null)
+  }
+
+  /** What opens: the restored draft when there is one, else the current version's document. */
+  function documentToOpen(data: StudioDocumentPayload): SerializedDocument {
+    return restoredDraft(data)?.document ?? data.document
+  }
+
+  /** `studio:ready` — the FB-45 shape for a template; a design session also names what opened (Track E3d-c). */
+  function readyMessage(data: StudioDocumentPayload): StudioToHostMessage {
+    if (isDesignPayload(data)) {
+      return {
+        type: 'studio:ready',
+        templateId: documentId.value,
+        documentId: documentId.value,
+        kind: 'design',
+        version: version.value
+      }
+    }
+    // CI: Track E4 — the host shows its one-time "Proposed by AI" banner from this flag.
+    if (data.proposal)
+      return {
+        type: 'studio:ready',
+        templateId: documentId.value,
+        version: version.value,
+        proposal: true
+      }
+    return { type: 'studio:ready', templateId: documentId.value, version: version.value }
+  }
+
+  /** Design mode paints the post's FIXED content; a template opens the candidate picker. */
+  function openPreview(data: StudioDocumentPayload): void {
+    if (isDesignPayload(data)) preview.openFixed(data.content)
+    else preview.open(config.previewCandidateId)
+  }
+
+  /** The PUT body: a design save never carries a name (the app owns it). */
+  function saveRequest(
+    document: SerializedDocument,
+    baseVersion: number,
+    kind: SaveKind
+  ): StudioSaveRequest {
+    if (isDesign) return { document, baseVersion, kind }
+    return { document, baseVersion, kind, name: store.state.documentName }
+  }
+
+  /** `studio:saved` — a design save also names the NEW row (Track E3d-c). */
+  function savedMessage(kind: SaveKind, response: StudioSaveResponse): StudioToHostMessage {
+    if (isDesign && response.designId)
+      return { type: 'studio:saved', version: response.version, kind, designId: response.designId }
+    return { type: 'studio:saved', version: response.version, kind }
+  }
+
   async function saveAsNewTemplate(): Promise<boolean> {
+    if (isDesign) return false
     if (status.value.kind === 'loading' || status.value.kind === 'error') return false
     try {
       const document = preview.overlay.serialize(STUDIO_ENGINE_VERSION)
@@ -501,14 +646,23 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     }
   }
 
-  async function backToTemplates(): Promise<boolean> {
-    // The upstream unsaved-changes prompt (Save / Don't save / Cancel); "Save" is
-    // routed to Save version through the hosted save override.
+  /** Leave the document for the app: the upstream unsaved-changes prompt first (Save / Don't save / Cancel). */
+  async function leaveTo(target: StudioNavigateTarget): Promise<boolean> {
+    // "Save" is routed to Save version through the hosted save override.
     const choice = await requestDocumentClose(store, store.state.documentName)
     if (choice === 'cancel') return false
     if (choice !== 'discard' && dirty.value) return false
-    navigate({ to: 'templates' })
+    navigate(target)
     return true
+  }
+
+  function backToTemplates(): Promise<boolean> {
+    return leaveTo({ to: isDesign ? 'back' : 'templates' })
+  }
+
+  /** Track E3d-c — File → Back to post: the same prompt, then the post the design belongs to. */
+  function backToPost(): Promise<boolean> {
+    return leaveTo({ to: 'back' })
   }
 
   function openInNewTab(): void {
@@ -523,6 +677,10 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
         return base
       case 'template':
         return `${base}/${encodeURIComponent(target.templateId)}/edit`
+      case 'back': {
+        const href = design.value?.back.href
+        return href ? new URL(href, config.apiOrigin).toString() : base
+      }
       default:
         return null
     }
@@ -566,6 +724,9 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     api,
     status,
     payload,
+    isDesign,
+    documentId,
+    design,
     version,
     dirty,
     bindings,
@@ -580,6 +741,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     saveDraft,
     saveAsNewTemplate,
     backToTemplates,
+    backToPost,
     openInNewTab,
     focusNode,
     dispose

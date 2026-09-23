@@ -67,6 +67,8 @@ export const APP_MENU_SCHEMA = [
     items: [
       // CI: hosted-only (FB-45) — hidden standalone by `hostedHidesMenuItem`.
       { id: 'ci-back-to-templates', label: 'Back to templates', target: 'browser' },
+      // CI: hosted-only, design mode (Track E3d-c) — hidden in a template session.
+      { id: 'ci-back-to-post', label: 'Back to post', target: 'browser' },
       { type: 'separator', target: 'browser' },
       { id: 'new', label: 'New', shortcut: 'MOD+N' },
       { id: 'open', label: 'Open…', shortcut: 'MOD+O' },

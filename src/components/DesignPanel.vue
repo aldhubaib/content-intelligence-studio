@@ -9,6 +9,8 @@ import { useEditorStore } from '@/app/editor/active-store'
 import { COMPONENT_TYPES, nodeIcon } from '@/app/editor/icons'
 import { openLibraryReview, useLibraryService } from '@/app/libraries'
 import BrandPreviewSection from '@/components/ci/BrandPreviewSection.vue'
+// CI: Track E3d-c — the locked-text note for a selected `content:*` text layer of a design.
+import ContentLockedNote from '@/components/ci/ContentLockedNote.vue'
 import Tip from '@/components/ui/overlay/Tip.vue'
 import PanelHeader from '@/components/ui/panel/PanelHeader.vue'
 
@@ -172,6 +174,7 @@ const { panels } = useI18n()
       <AppearanceSection />
       <MaskSection />
       <TypographySection v-if="node.type === 'TEXT'" />
+      <ContentLockedNote v-if="hosted" />
       <BrandPreviewSection v-if="hosted" />
       <FillSection />
       <StrokeSection />

@@ -134,6 +134,24 @@ describe('contentPreviewChanges', () => {
     ).toBeLessThanOrEqual(10)
   })
 
+  test("E3d-c: a repeat body shows the design copy's first chunk when the post carries one", () => {
+    const body = { ...text, width: 200, height: 30, fontSize: 20 }
+    const chunked = { ...CONTENT, bodyChunks: ['الجزء الأول من النص', 'الجزء الثاني'] }
+    expect(
+      contentPreviewChanges(body, 'body', chunked, { role: 'repeat', maxChars: null })
+    ).toEqual({ text: 'الجزء الأول من النص' })
+    // The cover still shows the whole body; an empty chunk list falls back to truncation.
+    expect(contentPreviewChanges(body, 'body', chunked, { role: 'cover', maxChars: null })).toEqual(
+      { text: CONTENT.body }
+    )
+    const none = { ...CONTENT, bodyChunks: [] }
+    expect(
+      contentPreviewChanges(body, 'body', none, { role: 'repeat', maxChars: null })?.text.endsWith(
+        '…'
+      )
+    ).toBe(true)
+  })
+
   test('an empty value or an image slot yields nothing', () => {
     expect(
       contentPreviewChanges(text, 'subtitle', CONTENT, { role: 'cover', maxChars: null })
