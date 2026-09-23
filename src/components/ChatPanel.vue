@@ -9,6 +9,7 @@ import { chatDocumentId } from '@/app/ai/chat/history/document'
 import { useChatSubmission } from '@/app/ai/chat/submission/use'
 import { useAIChat } from '@/app/ai/chat/use'
 import { didHitStepLimit } from '@/app/ai/tools'
+import { hostedAIEnabled } from '@/app/ci/ai'
 import { getActiveEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
 import { toast } from '@/app/shell/ui'
@@ -18,6 +19,8 @@ import ChatHistory from '@/components/chat/ChatHistory.vue'
 import ChatInput from '@/components/chat/ChatInput.vue'
 import ChatTranscript from '@/components/chat/ChatTranscript.vue'
 import ProviderSetup from '@/components/chat/ProviderSetup.vue'
+// CI: hosted AI presets above the composer (Track E4 Part C).
+import AIPresetChips from '@/components/ci/AIPresetChips.vue'
 
 const { isConfigured, ensureChat, history, chatFailure, clearChatFailure } = useAIChat()
 const { ai } = useI18n()
@@ -196,6 +199,12 @@ function handleStop() {
       <p v-if="history.readOnly.value" role="status" class="px-3 py-2 text-xs text-muted">
         {{ ai.chatReadOnly }}
       </p>
+      <!-- CI: preset chips only in hosted mode with AI on; same submit path as a typed message. -->
+      <AIPresetChips
+        v-if="hostedAIEnabled && isConfigured && !agentHistoryReadOnly && !history.readOnly.value"
+        :disabled="submission.busy.value || history.busy.value || status !== 'ready'"
+        @submit="submission.submit"
+      />
       <ChatInput
         v-if="isConfigured && !agentHistoryReadOnly && !history.readOnly.value"
         :status="status"
