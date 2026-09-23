@@ -233,6 +233,23 @@ describe('hosted session', () => {
     expect(session.aiEnabled.value).toBe(true)
   })
 
+  test('E4: an unsaved AI proposal is flagged on studio:ready; a plain template is not', async () => {
+    const proposed = await booted(payload({ proposal: true }))
+    expect(proposed.host.posted).toContainEqual({
+      type: 'studio:ready',
+      templateId: 'tpl-1',
+      version: 4,
+      proposal: true
+    })
+    const plain = await booted(payload({ proposal: false }))
+    const ready = plain.host.posted.find(
+      (m): m is { type: 'studio:ready'; proposal?: boolean } =>
+        (m as { type: string }).type === 'studio:ready'
+    )
+    expect(ready).toBeDefined()
+    expect(ready && 'proposal' in ready).toBe(false)
+  })
+
   test('an edit makes the document dirty and tells the host; Save version PUTs a version', async () => {
     const { store, host, remote, session } = await booted()
     const frame = frameOf(store)

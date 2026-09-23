@@ -8,7 +8,7 @@
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
 export type StudioToHostMessage =
-  | { type: 'studio:ready'; templateId: string; version: number }
+  | { type: 'studio:ready'; templateId: string; version: number; proposal?: boolean }
   | { type: 'studio:dirty'; dirty: boolean }
   | { type: 'studio:saved'; version: number; kind: 'draft' | 'version' }
   | { type: 'studio:error'; message: string }

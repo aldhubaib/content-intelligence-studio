@@ -22,6 +22,8 @@ export interface StudioTemplatePayload {
   ai: { enabled: boolean; models?: Array<{ id: string; label: string }> }
   /** Present when the app holds an autosaved draft newer than `version`. */
   draft?: { document: SerializedDocument; savedAt: string } | null
+  /** Track E4 (ADR-061 §4): true while this template is an AI proposal no person has saved yet. */
+  proposal?: boolean
 }
 
 export interface StudioBrandAsset {

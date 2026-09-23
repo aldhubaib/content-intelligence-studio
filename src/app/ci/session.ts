@@ -270,7 +270,13 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     if (data.draft) toast.info(HOSTED_COPY.draftRestored(formatTime(data.draft.savedAt)))
 
     status.value = { kind: 'ready' }
-    bridge.post({ type: 'studio:ready', templateId: config.templateId, version: version.value })
+    bridge.post({
+      type: 'studio:ready',
+      templateId: config.templateId,
+      version: version.value,
+      // CI: Track E4 — the host shows its one-time "Proposed by AI" banner from this flag.
+      ...(data.proposal ? { proposal: true } : {})
+    })
 
     if (data.brand && !options.skipBrandLibrary) {
       void installBrandLibrary(store, api, data.brand, config.workspaceSlug)
