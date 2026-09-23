@@ -14,7 +14,7 @@ import { resolvedAppTheme } from '@/app/shell/theme'
 import { activeTab } from '@/app/tabs'
 import BrandMark from '@/components/brand/BrandMark.vue'
 import CanvasSplitRoot from '@/components/canvas/CanvasSplitRoot.vue'
-import SlotsPanel from '@/components/ci/SlotsPanel.vue'
+import BindingsPanel from '@/components/ci/BindingsPanel.vue'
 import CollabPanel from '@/components/CollabPanel/CollabPanel.vue'
 import EditorCanvas from '@/components/EditorCanvas.vue'
 import LayersPanel from '@/components/LayersPanel.vue'
@@ -73,14 +73,14 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
       :max-size="30"
       class="flex flex-col"
     >
-      <!-- CI: no collab / Share / account in the hosted Studio (ADR-058 §8); the Slots panel takes the spot. -->
+      <!-- CI: no collab / Share / account in the hosted Studio (ADR-058 §8); the Bindings panel takes the spot (FB-44 §3). -->
       <div
         v-if="!CI_STUDIO && !hosted"
         class="flex shrink-0 items-center justify-between border-b border-border px-1.5 py-1.5"
       >
         <CollabPanel />
       </div>
-      <SlotsPanel v-if="hosted" />
+      <BindingsPanel v-if="hosted" />
       <PropertiesPanel />
     </SplitterPanel>
   </SplitterGroup>

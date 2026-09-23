@@ -1,4 +1,5 @@
-// CI: typed client for the Content Intelligence Studio API (Track E3c Part B / C).
+// CI: typed client for the Content Intelligence Studio API (Track E3c Part B / C,
+// Track E3d-a binding model v3 — FB-44 / FB-45).
 //
 // One template per session. Every call carries `Authorization: Bearer <token>`
 // and is bound to the configured app origin; a URL on another origin is
@@ -7,6 +8,74 @@
 
 import type { SerializedDocument } from './document'
 
+/** One design format of the app's catalog (`src/lib/design-formats.ts` there). */
+export interface StudioFormat {
+  /** `instagram_post`, `linkedin_wide`, … */
+  id: string
+  /** "Instagram post" */
+  label: string
+  platform: string
+  width: number
+  height: number
+  /** "4:5" */
+  aspect: string
+  /** Safe-area inset in percent of the frame: [top, right, bottom, left]. */
+  safeInsetPct: readonly [number, number, number, number]
+  /** Carousel slide limit on the platform; 1 = single image only. */
+  slideCap: number
+}
+
+/** The closed binding vocabulary the app hands over (one source: `src/lib/bindings-vocabulary.ts` there). */
+export interface StudioBindingsVocabulary {
+  /** `title`, `subtitle`, `body`, `cta`, `article-url` */
+  contentText: string[]
+  /** `image` */
+  contentImage: string[]
+  /** `ai-image` — a valid binding with no writer yet. */
+  reserved: string[]
+  /** `user-image`, `company-logo-light`, `company-logo-dark` */
+  brandKinds: string[]
+  /** `cover`, `repeat`, `ending` */
+  roles: string[]
+  /** Legacy `slot:<name>` → v3 slot (`headline` → `title`, `cover` → `image`, …). */
+  legacy: Record<string, string>
+}
+
+export type StudioRoleName = 'cover' | 'repeat' | 'ending'
+
+export interface StudioBindingsReason {
+  code: string
+  words: string
+  name?: string
+  count?: number
+}
+
+export interface StudioBindingsRole {
+  role: StudioRoleName
+  present: boolean
+  frameId: string | null
+  status: 'ok' | 'missing'
+  bindings: string[]
+  reasons: StudioBindingsReason[]
+  /** "Cover · OK" / "Repeat · repeat has no content:body" / "Ending · not added" */
+  words: string
+}
+
+/** The app's Bindings report of the CURRENT version — the Studio recomputes its own over the live graph. */
+export interface StudioBindingsReport {
+  version: string
+  roles: StudioBindingsRole[]
+  strayBindings: string[]
+  usable: { single: boolean; carousel: boolean }
+  statusWords: string
+  migrated: boolean
+}
+
+export interface StudioBindingsPayload {
+  vocabulary: StudioBindingsVocabulary
+  report: StudioBindingsReport
+}
+
 /** GET /api/studio/templates/{id} */
 export interface StudioTemplatePayload {
   document: SerializedDocument
@@ -14,10 +83,14 @@ export interface StudioTemplatePayload {
   /** Monotonic template version the document was read at; sent back as `baseVersion`. */
   version: number
   updatedAt: string
+  /** The ONE format this template is drawn for (FB-44 §1). */
+  format: StudioFormat
+  /** The whole catalog — the **Content formats** frame presets. */
+  formats: StudioFormat[]
+  collection: string | null
   brand: StudioBrand | null
   fonts: StudioFont[]
-  /** Slots the bound formats require (`headline`, `cover`, …); a missing one is a warning in the Slots panel. */
-  requiredSlots: string[]
+  bindings: StudioBindingsPayload
   /** AI panel switch for the workspace + the models the proxy offers (Part F); `models` is empty when disabled. */
   ai: { enabled: boolean; models?: Array<{ id: string; label: string }> }
   /** Present when the app holds an autosaved draft newer than `version`. */
@@ -26,21 +99,25 @@ export interface StudioTemplatePayload {
   proposal?: boolean
 }
 
+/** The three galleries as the layers name them: `brand:<kind>[:<asset name>]` (FB-44 §5). */
+export type StudioBrandAssetKind = 'user-image' | 'company-logo-light' | 'company-logo-dark'
+
 export interface StudioBrandAsset {
-  /** Stable key inside the library (`logo-light`, `logo-dark`, `photo:<id>`). */
-  key: string
+  /** Row id — the `…/assets/<id>` URL segment and the library component key. */
+  id: string
   name: string
   /** Absolute URL on the app origin (proxied media) — fetched with the bearer. */
   url: string
-  kind: 'logo-light' | 'logo-dark' | 'photo'
+  kind: StudioBrandAssetKind
+  /** The gallery's default: what a `brand:<kind>` layer without a name resolves to. */
+  isDefault: boolean
+  contentType: string
 }
 
 export interface StudioBrand {
   workspaceName: string
-  colors: Record<'primary' | 'secondary' | 'accent' | 'background' | 'text', string>
-  fontArabicFamily: string
-  fontLatinFamily: string
-  watermarkText: string | null
+  /** TWO colours (FB-44 §4) — the `Brand` variables collection inside the document mirrors them. */
+  colors: Record<'primary' | 'secondary', string>
   assets: StudioBrandAsset[]
 }
 
@@ -48,11 +125,11 @@ export interface StudioFont {
   family: string
   weight: number
   style: 'normal' | 'italic'
-  /** Absolute URL on the app origin (`/api/design-engine/brand-fonts/…`). */
+  /** Absolute URL on the app origin (`/api/studio/templates/…/fonts/<face>.ttf`). */
   url: string
 }
 
-/** PUT /api/studio/templates/{id} */
+/** PUT /api/studio/templates/{id} — the two document saves. */
 export interface StudioSaveRequest {
   document: SerializedDocument
   baseVersion: number
@@ -63,6 +140,12 @@ export interface StudioSaveRequest {
 export interface StudioSaveResponse {
   version: number
   updatedAt: string
+}
+
+/** PUT `{ kind: "duplicate" }` — **Save as new template** (FB-45): the same document as a NEW template of the same format and collection. */
+export interface StudioDuplicateResponse {
+  templateId: string
+  name: string
 }
 
 export class StudioAPIError extends Error {
@@ -103,6 +186,13 @@ export interface StudioAPIOptions {
 export interface StudioAPI {
   loadTemplate(signal?: AbortSignal): Promise<StudioTemplatePayload>
   saveTemplate(body: StudioSaveRequest, signal?: AbortSignal): Promise<StudioSaveResponse>
+  /** Inline rename in the title bar → `renameTemplate` on the app (FB-45); no version is written. */
+  renameTemplate(name: string, signal?: AbortSignal): Promise<{ name: string }>
+  /** File › Save as new template (FB-45). */
+  duplicateTemplate(
+    body: { document: SerializedDocument; name?: string },
+    signal?: AbortSignal
+  ): Promise<StudioDuplicateResponse>
   /** Fetch bytes (fonts, brand media) from a URL on the app origin with the bearer. */
   fetchBytes(url: string, signal?: AbortSignal): Promise<Uint8Array>
   /** Absolute URL of the AI proxy the panel's provider posts to. */
@@ -158,6 +248,17 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
     return new StudioAPIError(message, response.status, body?.error?.code ?? null)
   }
 
+  async function put<T>(body: unknown, signal?: AbortSignal): Promise<T> {
+    const response = await request(base, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal
+    })
+    if (!response.ok) throw await readError(response)
+    return (await response.json()) as T
+  }
+
   return {
     apiOrigin: options.apiOrigin,
     async loadTemplate(signal) {
@@ -165,15 +266,14 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
       if (!response.ok) throw await readError(response)
       return (await response.json()) as StudioTemplatePayload
     },
-    async saveTemplate(body, signal) {
-      const response = await request(base, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal
-      })
-      if (!response.ok) throw await readError(response)
-      return (await response.json()) as StudioSaveResponse
+    saveTemplate(body, signal) {
+      return put<StudioSaveResponse>(body, signal)
+    },
+    renameTemplate(name, signal) {
+      return put<{ name: string }>({ kind: 'rename', name }, signal)
+    },
+    duplicateTemplate(body, signal) {
+      return put<StudioDuplicateResponse>({ kind: 'duplicate', ...body }, signal)
     },
     async fetchBytes(url, signal) {
       const response = await request(url, { method: 'GET', headers: { Accept: '*/*' }, signal })

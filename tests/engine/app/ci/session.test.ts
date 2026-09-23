@@ -3,16 +3,26 @@ import { afterEach, describe, expect, test } from 'bun:test'
 
 import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
 
-import { StudioConflictError, type StudioAPI, type StudioTemplatePayload } from '@/app/ci/api'
+import {
+  StudioConflictError,
+  type StudioAPI,
+  type StudioFormat,
+  type StudioTemplatePayload
+} from '@/app/ci/api'
+import { DEFAULT_VOCABULARY } from '@/app/ci/bindings'
 import { serializeGraph } from '@/app/ci/document'
 import { hostedToken } from '@/app/ci/hosted'
 import type { HostBridge, HostToStudioMessage, StudioToHostMessage } from '@/app/ci/protocol'
 import {
   createHostedSession,
   hostedWindowTitle,
+  isDraftName,
+  RENAME_DEBOUNCE_MS,
+  saveStateWords,
   type AutosaveScheduler,
   type HostedSession
 } from '@/app/ci/session'
+import { answerClosePrompt, closePrompt } from '@/app/document/close/prompt'
 import { createEditorStore, type EditorStore } from '@/app/editor/session'
 
 const CONFIG = {
@@ -22,11 +32,23 @@ const CONFIG = {
   initialToken: 'tok'
 }
 
-function templateGraph(): SceneGraph {
+const FORMAT: StudioFormat = {
+  id: 'instagram_post',
+  label: 'Instagram post',
+  platform: 'INSTAGRAM',
+  width: 1080,
+  height: 1350,
+  aspect: '4:5',
+  safeInsetPct: [4, 4, 12, 4],
+  slideCap: 1
+}
+
+/** A model-v3 template: a `cover` frame with an image layer (no title yet). */
+function templateGraph(frameName = 'cover', imageName = 'content:image'): SceneGraph {
   const graph = new SceneGraph()
   const page = graph.getPages()[0]
-  const frame = graph.createNode('FRAME', page.id, { name: 'Portrait', width: 1080, height: 1350 })
-  graph.createNode('RECTANGLE', frame.id, { name: 'slot:cover', width: 1080, height: 700 })
+  const frame = graph.createNode('FRAME', page.id, { name: frameName, width: 1080, height: 1350 })
+  graph.createNode('RECTANGLE', frame.id, { name: imageName, width: 1080, height: 700 })
   return graph
 }
 
@@ -36,9 +58,19 @@ function payload(overrides: Partial<StudioTemplatePayload> = {}): StudioTemplate
     name: 'Portrait card',
     version: 4,
     updatedAt: '2026-09-22T10:00:00Z',
+    format: FORMAT,
+    formats: [FORMAT],
+    collection: null,
     brand: null,
     fonts: [],
-    requiredSlots: ['headline', 'cover'],
+    bindings: {
+      vocabulary: DEFAULT_VOCABULARY,
+      report: {
+        version: 'bindings-v3',
+        usable: { single: false, carousel: false },
+        statusWords: ''
+      }
+    },
     ai: { enabled: true },
     ...overrides
   }
@@ -46,11 +78,21 @@ function payload(overrides: Partial<StudioTemplatePayload> = {}): StudioTemplate
 
 function fakeAPI(data: StudioTemplatePayload) {
   const saves: Array<{ kind: string; baseVersion: number; name?: string }> = []
+  const renames: string[] = []
+  const duplicates: Array<{ name?: string }> = []
   let nextVersion = data.version
   let failNext: Error | null = null
   const api: StudioAPI = {
     apiOrigin: CONFIG.apiOrigin,
     loadTemplate: async () => data,
+    renameTemplate: async (name) => {
+      renames.push(name)
+      return { name }
+    },
+    duplicateTemplate: async (body) => {
+      duplicates.push({ name: body.name })
+      return { templateId: 'tpl-2', name: body.name ?? 'copy' }
+    },
     saveTemplate: async (body) => {
       saves.push({ kind: body.kind, baseVersion: body.baseVersion, name: body.name })
       if (failNext) {
@@ -67,6 +109,8 @@ function fakeAPI(data: StudioTemplatePayload) {
   return {
     api,
     saves,
+    renames,
+    duplicates,
     failNextWith(error: Error) {
       failNext = error
     }
@@ -205,7 +249,7 @@ describe('hosted session', () => {
   test('E3c.1 Part B: the frame is fitted to the viewport exactly once per load, and never again', async () => {
     const { store, host, clock, fits, session } = await booted()
     // Once, with the loaded graph in place (the fit is what the first frame shows).
-    expect(fits).toEqual([['Portrait']])
+    expect(fits).toEqual([['cover']])
     expect(session.status.value).toEqual({ kind: 'ready' })
     // 1080×1350 plus the engine's 80 px padding inside the 1920×1080 test viewport.
     expect(store.state.zoom).toBeCloseTo(1080 / (1350 + 160), 3)
@@ -224,13 +268,39 @@ describe('hosted session', () => {
   test('loads the template into the store, names it, reports ready and stays clean', async () => {
     const { store, host, session } = await booted()
     expect(store.state.documentName).toBe('Portrait card')
-    expect([...store.graph.getAllNodes()].some((node) => node.name === 'slot:cover')).toBe(true)
+    expect([...store.graph.getAllNodes()].some((node) => node.name === 'content:image')).toBe(true)
     expect(session.version.value).toBe(4)
     expect(session.dirty.value).toBe(false)
     expect(session.status.value).toEqual({ kind: 'ready' })
     expect(host.posted).toContainEqual({ type: 'studio:ready', templateId: 'tpl-1', version: 4 })
-    expect(session.slots.value.missingRequired).toEqual(['headline'])
+    const cover = session.bindings.value.roles.find((r) => r.role === 'cover')
+    expect(cover?.present).toBe(true)
+    expect(cover?.reasons.map((r) => r.code)).toEqual(['cover_without_text'])
+    expect(session.bindings.value.usable.single).toBe(false)
+    expect(session.saveState.value).toEqual({ kind: 'saved', version: 4 })
+    expect(saveStateWords(session.saveState.value)).toBe('Saved · v4')
     expect(session.aiEnabled.value).toBe(true)
+  })
+
+  test('FB-44 §2: a legacy slot: template is migrated on load and left dirty so the next save writes v3 names', async () => {
+    const { store, session } = await booted(
+      payload({ document: serializeGraph(templateGraph('Portrait', 'slot:cover'), '0.15.1') })
+    )
+    const names = [...store.graph.getAllNodes()].map((n) => n.name)
+    expect(names).toContain('cover')
+    expect(names).toContain('content:image')
+    expect(names).not.toContain('slot:cover')
+    expect(session.dirty.value).toBe(true)
+    expect(session.saveState.value).toEqual({ kind: 'unsaved' })
+  })
+
+  test('FB-44 §3: the Bindings report follows edits — a content:title text turns the cover OK', async () => {
+    const { store, session } = await booted()
+    const frame = frameOf(store)
+    store.createShape('TEXT', 10, 10, 500, 100, frame.id, 'content:title')
+    const cover = session.bindings.value.roles.find((r) => r.role === 'cover')
+    expect(cover?.status).toBe('ok')
+    expect(session.bindings.value.usable.single).toBe(true)
   })
 
   test('E4: an unsaved AI proposal is flagged on studio:ready; a plain template is not', async () => {
@@ -263,6 +333,7 @@ describe('hosted session', () => {
     expect(session.version.value).toBe(5)
     expect(session.dirty.value).toBe(false)
     expect(host.posted).toContainEqual({ type: 'studio:saved', version: 5, kind: 'version' })
+    expect(session.saveState.value).toEqual({ kind: 'saved', version: 5 })
   })
 
   test('autosave sends a draft every interval only while dirty', async () => {
@@ -295,30 +366,67 @@ describe('hosted session', () => {
     expect(session.status.value).toEqual({ kind: 'ready' })
   })
 
-  test('host messages: token rotates, save-version saves, request-close answers by dirtiness', async () => {
-    const { store, host, remote, session } = await booted()
+  test('host messages: only the token rotates (FB-45 — the chrome is inside the Studio)', async () => {
+    const { host } = await booted()
     host.send({ type: 'host:token', token: 'rotated' })
     expect(hostedToken.value).toBe('rotated')
+  })
 
-    host.send({ type: 'host:request-close' })
-    expect(host.posted.at(-1)).toEqual({ type: 'studio:close-ok' })
+  test('FB-45: Back to templates leaves at once when clean, asks once when dirty', async () => {
+    const { store, host, remote, session } = await booted()
+    expect(await session.backToTemplates()).toBe(true)
+    expect(host.posted.at(-1)).toEqual({ type: 'studio:navigate', to: 'templates' })
 
     const frame = frameOf(store)
     store.updateNode(frame.id, { name: 'Renamed' })
-    host.send({ type: 'host:request-close' })
-    expect(host.posted.at(-1)).toEqual({ type: 'studio:close-blocked', dirty: true })
-
-    host.send({ type: 'host:save-version' })
+    const cancelled = session.backToTemplates()
     await settle()
-    expect(remote.saves).toEqual([{ kind: 'version', baseVersion: 4, name: 'Portrait card' }])
-    expect(session.dirty.value).toBe(false)
+    expect(closePrompt.value).toEqual({ documentName: 'Portrait card' })
+    answerClosePrompt('cancel')
+    expect(await cancelled).toBe(false)
+    expect(host.posted.filter((m) => m.type === 'studio:navigate')).toHaveLength(1)
+
+    const discarded = session.backToTemplates()
+    await settle()
+    answerClosePrompt('discard')
+    expect(await discarded).toBe(true)
+    expect(host.posted.at(-1)).toEqual({ type: 'studio:navigate', to: 'templates' })
+    expect(remote.saves).toEqual([])
+  })
+
+  test('FB-45: Save as new template duplicates through the app and navigates to the copy; Open in new tab asks the host', async () => {
+    const { host, remote, session } = await booted()
+    expect(await session.saveAsNewTemplate()).toBe(true)
+    expect(remote.duplicates).toEqual([{ name: 'Portrait card copy' }])
+    expect(host.posted.at(-1)).toEqual({
+      type: 'studio:navigate',
+      to: 'template',
+      templateId: 'tpl-2'
+    })
+    session.openInNewTab()
+    expect(host.posted.at(-1)).toEqual({ type: 'studio:navigate', to: 'new-tab' })
+  })
+
+  test('FB-45: an inline rename reaches renameTemplate once the name settles; Draft names show the mark', async () => {
+    expect(isDraftName('Draft')).toBe(true)
+    expect(isDraftName('Draft 2')).toBe(true)
+    expect(isDraftName('Drafting board')).toBe(false)
+    const { store, host, remote } = await booted()
+    store.state.documentName = 'Land'
+    store.state.documentName = 'Landscape card'
+    await new Promise((resolve) => {
+      setTimeout(resolve, RENAME_DEBOUNCE_MS + 20)
+    })
+    expect(remote.renames).toEqual(['Landscape card'])
+    expect(host.posted.at(-1)).toEqual({ type: 'studio:renamed', name: 'Landscape card' })
   })
 
   test('a stored draft is opened and left dirty so it becomes a version on the next save', async () => {
     const draftGraph = templateGraph()
-    const frame = [...draftGraph.getAllNodes()].find((node) => node.name === 'Portrait')
+    const frame = [...draftGraph.getAllNodes()].find((node) => node.name === 'cover')
     if (!frame) throw new Error('Expected the template frame')
-    draftGraph.updateNode(frame.id, { name: 'From draft' })
+    draftGraph.updateNode(frame.id, { name: 'cover', x: 300 })
+    draftGraph.createNode('TEXT', frame.id, { name: 'From draft' })
     const { store, session } = await booted(
       payload({
         draft: { document: serializeGraph(draftGraph, '0.15.1'), savedAt: '2026-09-22T10:05:00Z' }

@@ -31,6 +31,8 @@ import { computed, nextTick, ref, watch } from 'vue'
 
 import { BindableValuePicker, useBindableValue, useRetainedPopup } from '@open-pencil/vue'
 
+import { brandSwatches } from '@/app/ci/document'
+import { isHosted } from '@/app/ci/hosted'
 import { BindingTrigger, useBindingFieldUI } from '@/components/ui/binding'
 import AppButton from '@/components/ui/button/AppButton.vue'
 import Tip from '@/components/ui/overlay/Tip.vue'
@@ -51,6 +53,13 @@ const {
 
 const binding = useBindableValue<unknown>()
 const { portalActive } = useRetainedPopup(binding.open)
+// CI: the two brand colours as a swatch row above the variable list (Track E3d-a, FB-44 §4).
+const hosted = isHosted()
+const swatches = computed(() => (hosted ? brandSwatches(binding.variables.value) : []))
+function bindSwatch(variableId: string) {
+  binding.actions.bind(variableId)
+  binding.actions.closePicker()
+}
 const creating = ref(false)
 const createName = ref('')
 const createInput = ref<HTMLInputElement | null>(null)
@@ -138,6 +147,26 @@ defineOptions({ inheritAttrs: false })
           data-slot="search"
           @update:model-value="updateSearch"
         />
+        <div
+          v-if="swatches.length > 0"
+          class="flex items-center gap-2 border-b border-border px-2 py-1.5"
+          data-test-id="ci-brand-swatches"
+          data-slot="brand"
+        >
+          <span class="text-[10px] text-muted">Brand</span>
+          <Tip v-for="swatch in swatches" :key="swatch.variableId" :label="swatch.name">
+            <button
+              type="button"
+              class="size-5 rounded border border-border focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              :class="picker.variable?.id === swatch.variableId ? 'ring-2 ring-accent' : ''"
+              :style="{ backgroundColor: swatch.css }"
+              :aria-label="`Use ${swatch.name}`"
+              :aria-pressed="picker.variable?.id === swatch.variableId"
+              :data-test-id="`ci-brand-swatch-${swatch.key}`"
+              @click="bindSwatch(swatch.variableId)"
+            />
+          </Tip>
+        </div>
         <ComboboxViewport :class="styles.pickerViewport" data-slot="viewport">
           <div v-if="picker.variables.length === 0" :class="styles.pickerEmpty" data-slot="empty">
             {{ emptyLabel }}

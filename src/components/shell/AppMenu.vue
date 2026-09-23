@@ -19,6 +19,7 @@ import IconChevronRight from '~icons/lucide/chevron-right'
 
 import { vTestId, useI18n } from '@open-pencil/vue'
 
+import { isHosted } from '@/app/ci/hosted'
 import { useEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
 import { useAppMenu } from '@/app/shell/menu/app-menu'
@@ -38,12 +39,15 @@ import {
 import { appMenuShortcutLabel } from '@/app/shell/menu/shortcut'
 import { resolvedAppTheme } from '@/app/shell/theme'
 import BrandMark from '@/components/brand/BrandMark.vue'
+import HostedTitleMeta from '@/components/ci/HostedTitleMeta.vue'
 import IconButton from '@/components/ui/button/IconButton.vue'
 import AppShortcutText from '@/components/ui/menu/AppShortcutText.vue'
 import { useMenuUI } from '@/components/ui/menu/menu'
 import { IS_TAURI } from '@/constants'
 
 const store = useEditorStore()
+// CI: Draft mark · format · save state next to the name in the hosted Studio (FB-45).
+const hosted = isHosted()
 
 const { rename, editingName, startRename, commitRename } = useDocumentNameRename(store)
 const nameInput = templateRef<HTMLInputElement>('nameInput')
@@ -62,7 +66,7 @@ const subMenuCls = useMenuUI({ content: 'min-w-44' })
 
 <template>
   <div class="shrink-0 border-b border-border">
-    <div class="flex items-center gap-2 px-2 py-1.5">
+    <div class="flex items-center gap-2 px-2 py-1.5" :class="hosted ? '@container' : ''">
       <BrandMark
         data-test-id="app-logo"
         variant="app-icon"
@@ -85,6 +89,7 @@ const subMenuCls = useMenuUI({ content: 'min-w-44' })
         @dblclick="startRename"
         >{{ store.state.documentName }}</span
       >
+      <HostedTitleMeta v-if="hosted && !editingName" />
       <IconButton
         :label="settings.title"
         data-test-id="app-settings-trigger"

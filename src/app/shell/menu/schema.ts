@@ -65,6 +65,9 @@ export const APP_MENU_SCHEMA = [
     label: 'File',
     paletteIcon: 'file',
     items: [
+      // CI: hosted-only (FB-45) — hidden standalone by `hostedHidesMenuItem`.
+      { id: 'ci-back-to-templates', label: 'Back to templates', target: 'browser' },
+      { type: 'separator', target: 'browser' },
       { id: 'new', label: 'New', shortcut: 'MOD+N' },
       { id: 'open', label: 'Open…', shortcut: 'MOD+O' },
       { id: 'open-recent', label: 'Open Recent', target: 'native' },
@@ -72,6 +75,8 @@ export const APP_MENU_SCHEMA = [
       { type: 'separator' },
       { id: 'save', label: 'Save', shortcut: 'MOD+S' },
       { id: 'save-as', label: 'Save As…', shortcut: 'MOD+SHIFT+S' },
+      // CI: hosted-only (FB-45) — Duplicate the template through the app.
+      { id: 'ci-save-as-new-template', label: 'Save as new template', target: 'browser' },
       { type: 'separator' },
       {
         id: 'export-selection',
@@ -102,6 +107,8 @@ export const APP_MENU_SCHEMA = [
         ]
       },
       { type: 'separator' },
+      // CI: hosted-only (FB-45).
+      { id: 'ci-open-in-new-tab', label: 'Open in new tab', target: 'browser' },
       { id: 'autosave', label: 'Autosave', checkbox: true },
       { id: 'close', label: 'Close Tab', shortcut: 'MOD+W' }
     ]

@@ -1,15 +1,22 @@
-// CI: the hosted editing session (ADR-058 §8, Track E3c Part B).
+// CI: the hosted editing session (ADR-058 §8, Track E3c Part B; Track E3d-a
+// binding model v3 + native chrome — FB-44 / FB-45).
 //
 // One template, one tab, one API. The session loads the document into the
-// Studio's first tab, keeps the app informed over the host bridge, autosaves
-// a draft every 30 s while the document is dirty, and turns the File → Save
-// command (⌘S) into "Save version". Nothing here touches `.fig`: the wire
+// Studio's first tab, migrates legacy `slot:` names to model v3 (marking the
+// document dirty so the next save writes them back), keeps the app informed
+// over the host bridge, autosaves a draft every 30 s while the document is
+// dirty, and turns the File → Save command (⌘S) into "Save version". The File
+// menu's Back / Save as new template / Open in new tab and the title bar's
+// inline rename live here too (FB-45). Nothing here touches `.fig`: the wire
 // format is the app's `openpencil-scene-graph` JSON, end to end.
 
 import { useIntervalFn } from '@vueuse/core'
 import { computed, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 
+import { IS_BROWSER } from '@open-pencil/core/constants'
+
 import { replaceAIModelSettings } from '@/app/ai/models/store'
+import { requestDocumentClose } from '@/app/document/close/prompt'
 import { applyImportedDocument } from '@/app/document/io/imported-document'
 import type { EditorStore } from '@/app/editor/session'
 import { toast } from '@/app/shell/ui'
@@ -22,12 +29,17 @@ import {
   type StudioAPI,
   type StudioTemplatePayload
 } from './api'
-import { installBrandLibrary, type BrandLibraryReport } from './brand-library'
-import { deserializeGraph, resolveBrandStrings, serializeGraph } from './document'
+import {
+  bindingsReport,
+  DEFAULT_VOCABULARY,
+  migrateLegacyBindings,
+  type BindingsReport
+} from './bindings'
+import { installBrandLibrary, previewBrandBindings, type BrandLibraryReport } from './brand-library'
+import { deserializeGraph, serializeGraph } from './document'
 import { installHostedFonts, type HostedFontReport } from './fonts'
 import { hostedToken, scrubTokenFromLocation, type HostedConfig } from './hosted'
-import { createHostBridge, type HostBridge } from './protocol'
-import { slotReport, type SlotReport } from './slots'
+import { createHostBridge, type HostBridge, type StudioNavigateTarget } from './protocol'
 
 export const AUTOSAVE_INTERVAL_MS = 30_000
 /** The engine version this Studio is; written into every saved envelope. */
@@ -43,8 +55,49 @@ export const HOSTED_COPY = {
   loadFailed: (message: string) => `The template could not be opened: ${message}`,
   fontsMissing: (count: number) =>
     count === 1 ? '1 brand font could not be loaded.' : `${count} brand fonts could not be loaded.`,
-  noBrandMedia: 'This workspace has no logo or photos in its brand kit yet.'
+  noBrandMedia: 'This workspace has no user images or logos in its brand kit yet.',
+  migrated: (count: number) =>
+    count === 1
+      ? '1 layer was renamed to the new content: name. Save a version to keep it.'
+      : `${count} layers were renamed to the new content: names. Save a version to keep them.`,
+  renameFailed: (message: string) => `The template could not be renamed: ${message}`,
+  duplicated: (name: string) => `Saved as “${name}”. Opening it…`,
+  duplicateFailed: (message: string) => `Save as new template failed: ${message}`
 } as const
+
+/** Rename debounce: the title bar commits on blur / Enter, the API is asked once the name settles. */
+export const RENAME_DEBOUNCE_MS = 400
+
+/** FB-42: a template still named "Draft" / "Draft 2" shows the Draft mark next to its title. */
+export function isDraftName(name: string): boolean {
+  return /^draft(\s+\d+)?$/i.test(name.trim())
+}
+
+export type HostedSaveState =
+  | { kind: 'loading' }
+  | { kind: 'saved'; version: number }
+  | { kind: 'unsaved' }
+  | { kind: 'saving' }
+  | { kind: 'conflict' }
+  | { kind: 'error'; message: string }
+
+/** The title bar's save word (FB-45): "Saved · v2" / "Unsaved changes" / "Saving…". */
+export function saveStateWords(state: HostedSaveState): string {
+  switch (state.kind) {
+    case 'loading':
+      return 'Opening…'
+    case 'saved':
+      return `Saved · v${state.version}`
+    case 'unsaved':
+      return 'Unsaved changes'
+    case 'saving':
+      return 'Saving…'
+    case 'conflict':
+      return 'Newer version on the server'
+    default:
+      return state.message
+  }
+}
 
 export type HostedSessionStatus =
   | { kind: 'loading' }
@@ -60,17 +113,27 @@ export interface HostedSession {
   readonly payload: Ref<StudioTemplatePayload | null>
   readonly version: Ref<number>
   readonly dirty: ComputedRef<boolean>
-  readonly slots: ComputedRef<SlotReport>
+  /** Live Bindings report over the graph (FB-44 §3). */
+  readonly bindings: ComputedRef<BindingsReport>
+  /** Bumps on every structural / name change of the graph — panels re-read on it. */
+  readonly graphTick: Ref<number>
+  readonly saveState: ComputedRef<HostedSaveState>
   readonly fontReport: Ref<HostedFontReport | null>
   readonly brandReport: Ref<BrandLibraryReport | null>
   readonly aiEnabled: ComputedRef<boolean>
   /** Load the template into the store; resolves when the canvas shows it. */
   load(): Promise<void>
-  /** File → Save / ⌘S / `host:save-version`. */
+  /** File → Save version / ⌘S. */
   saveVersion(): Promise<boolean>
   /** Autosave target; also runs on `pagehide`. */
   saveDraft(): Promise<boolean>
-  /** Bring one slot's node into view. */
+  /** File → Save as new template: the current document as a NEW template, then open it. */
+  saveAsNewTemplate(): Promise<boolean>
+  /** File → Back to templates: the upstream unsaved-changes prompt, then leave. */
+  backToTemplates(): Promise<boolean>
+  /** File → Open in new tab. */
+  openInNewTab(): void
+  /** Bring one node into view. */
   focusNode(nodeId: string): void
   dispose(): void
 }
@@ -144,9 +207,23 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   const graphTick = shallowRef(0)
   const dirty = computed(() => store.hasUnsavedChanges())
   const aiEnabled = computed(() => payload.value?.ai.enabled ?? false)
-  const slots = computed(() => {
+  const vocabulary = computed(() => payload.value?.bindings.vocabulary ?? DEFAULT_VOCABULARY)
+  const bindings = computed(() => {
     void graphTick.value
-    return slotReport(store.graph, payload.value?.requiredSlots ?? [], store.state.currentPageId)
+    return bindingsReport(
+      store.graph,
+      vocabulary.value,
+      payload.value?.format ?? null,
+      store.state.currentPageId
+    )
+  })
+  const saveState = computed<HostedSaveState>(() => {
+    const s = status.value
+    if (s.kind === 'loading') return { kind: 'loading' }
+    if (s.kind === 'error') return { kind: 'error', message: s.message }
+    if (s.kind === 'saving') return { kind: 'saving' }
+    if (s.kind === 'conflict') return { kind: 'conflict' }
+    return dirty.value ? { kind: 'unsaved' } : { kind: 'saved', version: version.value }
   })
 
   const disposers: Array<() => void> = []
@@ -154,7 +231,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   let stopAutosave: (() => void) | null = null
   let disposed = false
 
-  // The Slots panel re-reads the graph on structural + name changes only.
+  // The Bindings panel re-reads the graph on structural + name changes only.
   for (const event of ['node:created', 'node:updated', 'node:deleted', 'graph:replaced'] as const) {
     disposers.push(
       store.onEditorEvent(event, () => {
@@ -166,32 +243,47 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   disposers.push(
     watch(dirty, (value) => bridge.post({ type: 'studio:dirty', dirty: value }), { flush: 'sync' })
   )
-  // Inline rename (FB-42) reaches the window title too.
+  // Inline rename in the title bar (FB-42 / FB-45): the window title follows at once,
+  // the app's `renameTemplate` is asked once the name settles.
+  let renameTimer: ReturnType<typeof setTimeout> | null = null
+  let lastSentName: string | null = null
   disposers.push(
     watch(
       () => store.state.documentName,
       (name) => {
-        if (status.value.kind !== 'loading') setWindowTitle(name)
+        if (status.value.kind === 'loading') return
+        setWindowTitle(name)
+        const trimmed = name.trim()
+        if (!trimmed || trimmed === lastSentName) return
+        if (renameTimer) clearTimeout(renameTimer)
+        renameTimer = setTimeout(() => {
+          renameTimer = null
+          void rename(trimmed)
+        }, RENAME_DEBOUNCE_MS)
       }
     )
   )
 
   disposers.push(
     bridge.onMessage((message) => {
-      switch (message.type) {
-        case 'host:token':
-          hostedToken.value = message.token
-          if (status.value.kind === 'error') status.value = { kind: 'ready' }
-          return
-        case 'host:save-version':
-          void saveVersion()
-          return
-        case 'host:request-close':
-          if (dirty.value) bridge.post({ type: 'studio:close-blocked', dirty: true })
-          else bridge.post({ type: 'studio:close-ok' })
-      }
+      // The only host message left (FB-45): a rotated token.
+      hostedToken.value = message.token
+      if (status.value.kind === 'error') status.value = { kind: 'ready' }
     })
   )
+
+  async function rename(name: string): Promise<void> {
+    if (name === lastSentName) return
+    try {
+      const result = await api.renameTemplate(name)
+      lastSentName = result.name
+      if (result.name !== store.state.documentName) store.state.documentName = result.name
+      bridge.post({ type: 'studio:renamed', name: result.name })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(HOSTED_COPY.renameFailed(message))
+    }
+  }
 
   function fail(message: string): void {
     status.value = { kind: 'error', message }
@@ -219,6 +311,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     }
     payload.value = data
     version.value = data.version
+    lastSentName = data.name
     store.state.documentName = data.name
     setWindowTitle(data.name)
     applyAI({ enabled: data.ai.enabled, models: data.ai.models ?? [] })
@@ -227,8 +320,10 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     try {
       load.update({ phase: 'reading', detail: data.name })
       if (!options.skipFonts) {
+        // FB-44 §4: typography is the template's own — the Arabic fallback is the
+        // first Arabic family in the catalog, else the engine's bundled face.
         fontReport.value = await installHostedFonts(api, data.fonts, {
-          arabicFamily: data.brand?.fontArabicFamily ?? null,
+          arabicFamily: data.fonts.find((f) => /arabic/i.test(f.family))?.family ?? null,
           signal: load.signal
         })
         if (fontReport.value.failed.length > 0)
@@ -241,10 +336,19 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       load.update({ phase: 'decoding', detail: data.name })
       await applyImportedDocument(store, graph, load)
       load.signal.throwIfAborted()
-      resolveBrandStrings(store.graph, (id, changes) => store.updateNode(id, changes))
       // A restored draft is what the person sees but not yet a version: leave the
       // change tracker dirty so the next autosave / Save version persists it.
       if (!data.draft) markSaved()
+      // Model v3 on load (FB-44 §2): legacy `slot:` names become `content:` names and
+      // an unnamed first artboard becomes `cover`. Through the store, so the document
+      // is dirty and the next save writes the names back.
+      const migration = migrateLegacyBindings(
+        store.graph,
+        (id, changes) => store.updateNode(id, changes),
+        vocabulary.value,
+        store.state.currentPageId
+      )
+      if (migration.renamedLayers > 0) toast.info(HOSTED_COPY.migrated(migration.renamedLayers))
       // Fit the frame to the viewport on open (E3c.1 Part B), the way the demo does
       // it (`src/app/demo/document.ts`): the engine only knows the real canvas size
       // once the surface exists, so wait for `canvasReady`, fit once, ask for a
@@ -270,6 +374,8 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     if (data.draft) toast.info(HOSTED_COPY.draftRestored(formatTime(data.draft.savedAt)))
 
     status.value = { kind: 'ready' }
+    // FB-45: focus lands in the Studio so ⌘S / shortcuts work without a click.
+    focusCanvas()
     bridge.post({
       type: 'studio:ready',
       templateId: config.templateId,
@@ -279,7 +385,17 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     })
 
     if (data.brand && !options.skipBrandLibrary) {
-      void installBrandLibrary(store, api, data.brand, config.workspaceSlug)
+      const brand = data.brand
+      void installBrandLibrary(store, api, brand, config.workspaceSlug, {
+        onLoaded: (loaded) => {
+          // A `brand:<kind>[:<name>]` layer opens with its asset painted in (FB-44 §5).
+          // A preview is not an edit: a clean document stays "Saved".
+          const wasDirty = dirty.value
+          const preview = previewBrandBindings(store, loaded, vocabulary.value)
+          if (preview.painted.length > 0 && !wasDirty) markSaved()
+          if (preview.painted.length > 0) store.requestRender()
+        }
+      })
         .then((report) => {
           brandReport.value = report
           return report
@@ -371,6 +487,74 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     return save('draft')
   }
 
+  async function saveAsNewTemplate(): Promise<boolean> {
+    if (status.value.kind === 'loading' || status.value.kind === 'error') return false
+    try {
+      const document = serializeGraph(store.graph, STUDIO_ENGINE_VERSION)
+      const result = await api.duplicateTemplate({
+        document,
+        name: `${store.state.documentName} copy`
+      })
+      toast.info(HOSTED_COPY.duplicated(result.name))
+      navigate({ to: 'template', templateId: result.templateId })
+      return true
+    } catch (error) {
+      if (error instanceof StudioUnauthorizedError) {
+        bridge.post({ type: 'studio:token-expiring' })
+        toast.error(HOSTED_COPY.sessionExpired)
+        return false
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      toast.error(HOSTED_COPY.duplicateFailed(message))
+      return false
+    }
+  }
+
+  async function backToTemplates(): Promise<boolean> {
+    // The upstream unsaved-changes prompt (Save / Don't save / Cancel); "Save" is
+    // routed to Save version through the hosted save override.
+    const choice = await requestDocumentClose(store, store.state.documentName)
+    if (choice === 'cancel') return false
+    if (choice !== 'discard' && dirty.value) return false
+    navigate({ to: 'templates' })
+    return true
+  }
+
+  function openInNewTab(): void {
+    navigate({ to: 'new-tab' })
+  }
+
+  /** App URL for a navigation target — used when the Studio runs outside the host frame. */
+  function appURLFor(target: StudioNavigateTarget): string | null {
+    const base = `${config.apiOrigin}/w/${encodeURIComponent(config.workspaceSlug)}/templates`
+    switch (target.to) {
+      case 'templates':
+        return base
+      case 'template':
+        return `${base}/${encodeURIComponent(target.templateId)}/edit`
+      default:
+        return null
+    }
+  }
+
+  function navigate(target: StudioNavigateTarget): void {
+    if (bridge.framed) {
+      bridge.post({ type: 'studio:navigate', ...target })
+      return
+    }
+    // Opened in its own tab (File → Open in new tab): no host to ask — go to the app.
+    if (!IS_BROWSER) return
+    const url = appURLFor(target)
+    if (url) window.location.assign(url)
+    else window.open(window.location.href, '_blank', 'noopener')
+  }
+
+  function focusCanvas(): void {
+    if (typeof document === 'undefined') return
+    const canvas = document.querySelector<HTMLElement>('[data-test-id="canvas-element"]')
+    canvas?.focus({ preventScroll: true })
+  }
+
   function focusNode(nodeId: string): void {
     if (!store.graph.getNode(nodeId)) return
     store.select([nodeId])
@@ -380,6 +564,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   function dispose(): void {
     if (disposed) return
     disposed = true
+    if (renameTimer) clearTimeout(renameTimer)
     stopAutosave?.()
     for (const stop of disposers) stop()
   }
@@ -391,13 +576,18 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     payload,
     version,
     dirty,
-    slots,
+    bindings,
+    graphTick,
+    saveState,
     fontReport,
     brandReport,
     aiEnabled,
     load,
     saveVersion,
     saveDraft,
+    saveAsNewTemplate,
+    backToTemplates,
+    openInNewTab,
     focusNode,
     dispose
   }

@@ -52,7 +52,7 @@ describe('createStudioAPI', () => {
       updatedAt: 'now',
       brand: null,
       fonts: [],
-      requiredSlots: ['headline'],
+      bindings: { vocabulary: {}, report: {} },
       ai: { enabled: true }
     }
     const { fetcher, calls } = mockFetch(() => Response.json(payload))
@@ -98,6 +98,28 @@ describe('createStudioAPI', () => {
       expect(error.status).toBe(500)
       expect(error.message).toBe('Database is away')
     })
+  })
+
+  test('FB-45: rename and duplicate are PUTs with their own kind', async () => {
+    const { fetcher, calls } = mockFetch((_, init) => {
+      const body = JSON.parse(String(init.body)) as { kind: string; name?: string }
+      if (body.kind === 'rename') return Response.json({ name: body.name })
+      if (body.kind === 'duplicate')
+        return Response.json({ templateId: 'tpl-9', name: 'Card copy' })
+      return new Response('', { status: 400 })
+    })
+    const client = api(fetcher)
+    expect(await client.renameTemplate('Card 2')).toEqual({ name: 'Card 2' })
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ kind: 'rename', name: 'Card 2' })
+    expect(await client.duplicateTemplate({ document: emptyDocument, name: 'Card copy' })).toEqual({
+      templateId: 'tpl-9',
+      name: 'Card copy'
+    })
+    expect(JSON.parse(String(calls[1].init.body))).toMatchObject({
+      kind: 'duplicate',
+      name: 'Card copy'
+    })
+    expect(calls[1].init.method).toBe('PUT')
   })
 
   test('refuses to fetch bytes from any other origin', async () => {

@@ -1,14 +1,33 @@
 <script setup lang="ts">
 import { CollapsibleContent, CollapsibleRoot, CollapsibleTrigger } from 'reka-ui'
+import { computed } from 'vue'
 
 import { useI18n } from '@open-pencil/vue'
 
+import { hostedSession } from '@/app/ci/boot'
+import { contentFormatsCategory } from '@/app/ci/frame-presets'
+import { isHosted } from '@/app/ci/hosted'
 import { useEditorStore } from '@/app/editor/active-store'
 import { FRAME_PRESET_CATEGORIES, type FramePreset } from '@/app/editor/frame-presets'
+import AddRoleFrameMenu from '@/components/ci/AddRoleFrameMenu.vue'
 import { collapsibleContentMotion } from '@/theme/collapsible/collapsible'
 
 const store = useEditorStore()
 const { panels } = useI18n()
+
+// CI: hosted, the one category is the app's **Content formats** (Track E3d-a, FB-44 §1);
+// standalone, Figma's device categories as upstream ships them.
+const hosted = isHosted()
+const categories = computed(() => {
+  if (!hosted) return FRAME_PRESET_CATEGORIES
+  const payload = hostedSession.value?.payload.value
+  return [contentFormatsCategory(payload?.formats ?? [], payload?.format.id ?? null)]
+})
+const graphTick = computed(() => hostedSession.value?.graphTick.value ?? 0)
+
+function categoryLabel(category: (typeof categories.value)[number]): string {
+  return category.label ?? panels.value[category.labelKey]
+}
 
 function createFrame(preset: FramePreset) {
   store.createFrameFromPreset(preset)
@@ -17,17 +36,18 @@ function createFrame(preset: FramePreset) {
 
 <template>
   <section :aria-label="panels.frame">
-    <div class="flex h-10 items-center border-b border-border px-3">
-      <span role="heading" aria-level="2" class="text-[11px] font-semibold text-surface">
+    <div class="flex h-10 items-center gap-2 border-b border-border px-3">
+      <span role="heading" aria-level="2" class="flex-1 text-[11px] font-semibold text-surface">
         {{ panels.frame }}
       </span>
+      <AddRoleFrameMenu v-if="hosted" :tick="graphTick" />
     </div>
 
     <CollapsibleRoot
-      v-for="category in FRAME_PRESET_CATEGORIES"
+      v-for="category in categories"
       :key="category.id"
       v-slot="{ open }"
-      :default-open="category.id === 'phone'"
+      :default-open="category.id === 'phone' || category.id === 'content-formats'"
       class="border-b border-border"
     >
       <CollapsibleTrigger
@@ -38,7 +58,7 @@ function createFrame(preset: FramePreset) {
           :data-open="open || undefined"
           aria-hidden="true"
         />
-        <span class="min-w-0 flex-1 truncate">{{ panels[category.labelKey] }}</span>
+        <span class="min-w-0 flex-1 truncate">{{ categoryLabel(category) }}</span>
       </CollapsibleTrigger>
 
       <CollapsibleContent :class="collapsibleContentMotion">

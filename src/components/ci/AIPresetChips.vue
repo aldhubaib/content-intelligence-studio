@@ -38,8 +38,7 @@ function run(id: AIPresetId): void {
   )
   const built = buildPresetSubmission(id, {
     brand: s.payload.value?.brand ?? null,
-    slots: s.slots.value,
-    requiredSlots: s.payload.value?.requiredSlots ?? [],
+    bindings: s.bindings.value,
     frame: primaryFrameOf(children),
     selection
   })

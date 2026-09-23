@@ -8,6 +8,8 @@ export type FramePresetCategoryId =
   | 'social-media'
   | 'figma-community'
   | 'archive'
+  // CI: the hosted Studio's one category — the app's content formats (Track E3d-a).
+  | 'content-formats'
 
 export type FramePresetCategoryLabelKey =
   | 'framePresetCategoryPhone'
@@ -31,6 +33,8 @@ export interface FramePreset {
 export interface FramePresetCategory {
   id: FramePresetCategoryId
   labelKey: FramePresetCategoryLabelKey
+  // CI: a literal label wins over the translated `labelKey` (hosted "Content formats").
+  label?: string
   presets: readonly FramePreset[]
 }
 

@@ -1,4 +1,4 @@
-// CI: `openpencil-scene-graph` envelope round trip + brand string resolution.
+// CI: `openpencil-scene-graph` envelope round trip + the two brand colour swatches.
 import { describe, expect, test } from 'bun:test'
 
 import { SceneGraph } from '@open-pencil/scene-graph'
@@ -8,8 +8,8 @@ import {
   base64ToBytes,
   bytesToBase64,
   deserializeGraph,
+  brandSwatches,
   isSerializedDocument,
-  resolveBrandStrings,
   serializeGraph
 } from '@/app/ci/document'
 
@@ -18,11 +18,10 @@ function sampleGraph(): SceneGraph {
   const page = graph.getPages()[0]
   const frame = graph.createNode('FRAME', page.id, { name: 'Portrait', width: 1080, height: 1350 })
   graph.createNode('TEXT', frame.id, {
-    name: 'slot:headline',
+    name: 'content:title',
     text: 'شلونك',
     fontFamily: 'Inter',
-    boundVariables: { fontFamily: 'brand:fontArabic' },
-    pluginData: [{ pluginId: 'content-intelligence', key: 'slot', value: 'headline' }]
+    pluginData: [{ pluginId: 'content-intelligence', key: 'maxChars', value: '90' }]
   })
   graph.images.set('img-1', new Uint8Array([1, 2, 3, 250, 251]))
   graph.variableCollections.set('brand', {
@@ -30,14 +29,23 @@ function sampleGraph(): SceneGraph {
     name: 'Brand',
     modes: [{ modeId: 'brand-default', name: 'Default' }],
     defaultModeId: 'brand-default',
-    variableIds: ['brand:fontArabic']
+    variableIds: ['brand:primary', 'brand:secondary']
   } as never)
-  graph.variables.set('brand:fontArabic', {
-    id: 'brand:fontArabic',
-    name: '$brand/fontArabic',
-    type: 'STRING',
+  graph.variables.set('brand:primary', {
+    id: 'brand:primary',
+    name: '$brand/primary',
+    type: 'COLOR',
     collectionId: 'brand',
-    valuesByMode: { 'brand-default': 'Noto Naskh Arabic' },
+    valuesByMode: { 'brand-default': { r: 15 / 255, g: 98 / 255, b: 254 / 255, a: 1 } },
+    description: '',
+    hiddenFromPublishing: true
+  } as never)
+  graph.variables.set('brand:secondary', {
+    id: 'brand:secondary',
+    name: '$brand/secondary',
+    type: 'COLOR',
+    collectionId: 'brand',
+    valuesByMode: { 'brand-default': { r: 57 / 255, g: 57 / 255, b: 57 / 255, a: 1 } },
     description: '',
     hiddenFromPublishing: true
   } as never)
@@ -63,13 +71,16 @@ describe('document envelope', () => {
     expect(restored.rootId).toBe(graph.rootId)
     expect([...restored.nodes.keys()].sort()).toEqual([...graph.nodes.keys()].sort())
     expect(restored.images.get('img-1')).toEqual(new Uint8Array([1, 2, 3, 250, 251]))
-    expect(restored.variables.get('brand:fontArabic')?.valuesByMode?.['brand-default']).toBe(
-      'Noto Naskh Arabic'
-    )
+    expect(restored.variables.get('brand:primary')?.valuesByMode?.['brand-default']).toEqual({
+      r: 15 / 255,
+      g: 98 / 255,
+      b: 254 / 255,
+      a: 1
+    })
     expect(restored.activeMode.get('brand')).toBe('brand-default')
     const text = [...restored.getAllNodes()].find((node) => node.type === 'TEXT')
     expect(text?.pluginData).toEqual([
-      { pluginId: 'content-intelligence', key: 'slot', value: 'headline' }
+      { pluginId: 'content-intelligence', key: 'maxChars', value: '90' }
     ])
   })
 
@@ -106,17 +117,14 @@ describe('document envelope', () => {
     )
   })
 
-  test('resolveBrandStrings applies the bound family on open', () => {
+  test('FB-44 §4: the two brand colours become swatches in kit order; anything else is ignored', () => {
     const graph = sampleGraph()
-    const updates: Array<[string, unknown]> = []
-    const touched = resolveBrandStrings(graph, (id, changes) => {
-      updates.push([id, changes])
-      graph.updateNode(id, changes)
-    })
-    expect(touched).toHaveLength(1)
-    expect(updates[0][1]).toEqual({ fontFamily: 'Noto Naskh Arabic' })
-    // Idempotent once applied.
-    expect(resolveBrandStrings(graph, () => undefined)).toEqual([])
+    const swatches = brandSwatches([...graph.variables.values()])
+    expect(swatches.map((s) => [s.key, s.variableId, s.name, s.css])).toEqual([
+      ['primary', 'brand:primary', '$brand/primary', 'rgb(15, 98, 254)'],
+      ['secondary', 'brand:secondary', '$brand/secondary', 'rgb(57, 57, 57)']
+    ])
+    expect(brandSwatches([])).toEqual([])
   })
 
   test('base64 helpers round-trip binary data', () => {

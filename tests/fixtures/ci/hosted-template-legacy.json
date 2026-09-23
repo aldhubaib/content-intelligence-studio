@@ -340,7 +340,7 @@
         {
           "id": "0:3",
           "type": "FRAME",
-          "name": "cover",
+          "name": "Portrait",
           "parentId": "0:2",
           "childIds": [
             "0:4",
@@ -518,7 +518,7 @@
         {
           "id": "0:4",
           "type": "RECTANGLE",
-          "name": "content:image",
+          "name": "slot:cover",
           "parentId": "0:3",
           "childIds": [],
           "x": 0,
@@ -693,7 +693,7 @@
         {
           "id": "0:5",
           "type": "TEXT",
-          "name": "content:title",
+          "name": "slot:headline",
           "parentId": "0:3",
           "childIds": [],
           "x": 60,

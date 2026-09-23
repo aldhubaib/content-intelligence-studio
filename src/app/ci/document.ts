@@ -7,6 +7,7 @@
 // same field rules, so a document round-trips between the Studio, the app's
 // headless renderer and the database without conversion.
 
+import { colorToCSS } from '@open-pencil/core/color'
 import type { SceneNode, Variable, VariableCollection } from '@open-pencil/scene-graph'
 import { SceneGraph } from '@open-pencil/scene-graph'
 import { createDefaultNode } from '@open-pencil/scene-graph/node-defaults'
@@ -121,45 +122,42 @@ export function deserializeGraph(document: unknown): SceneGraph {
 // ---------------------------------------------------------------------------
 // Brand variables (mirror of the app's `brand-variables.ts`; read-only here)
 // ---------------------------------------------------------------------------
+//
+// CI: Track E3d-a (FB-44 §4) — the kit is TWO colours. The document carries a
+// `Brand` collection with `brand:primary` / `brand:secondary` COLOR variables
+// (the app writes them with `applyBrandVariables` before handing the document
+// over); fonts and the watermark are the template's own. The colour picker
+// offers the two as a **Brand** swatch row (`VariableBindingPicker.vue`).
 
+export const BRAND_COLLECTION_ID = 'brand'
 export const BRAND_MODE_ID = 'brand-default'
-const BRAND_VARIABLE_PREFIX = 'brand:'
+export const BRAND_COLOR_KEYS = ['primary', 'secondary'] as const
+export type BrandColorKey = (typeof BRAND_COLOR_KEYS)[number]
 
-function brandStringValue(graph: SceneGraph, key: string): string | null {
-  const value = graph.variables.get(`${BRAND_VARIABLE_PREFIX}${key}`)?.valuesByMode[BRAND_MODE_ID]
-  return typeof value === 'string' ? value : null
+export function brandVariableId(key: BrandColorKey): string {
+  return `brand:${key}`
 }
 
-/**
- * STRING bindings the engine does not resolve itself: a text node whose
- * `fontFamily` / `text` is bound to `brand:fontArabic` / `brand:fontLatin` /
- * `brand:watermark` takes the variable's current value when the document
- * opens. Returns the ids touched; `update` routes through the editor so the
- * layout is invalidated.
- */
-export function resolveBrandStrings(
-  graph: SceneGraph,
-  update: (id: string, changes: Partial<SceneNode>) => void
-): string[] {
-  const touched: string[] = []
-  for (const node of graph.getAllNodes()) {
-    if (node.type !== 'TEXT') continue
-    const changes: Partial<SceneNode> = {}
-    const fontBinding = node.boundVariables.fontFamily
-    if (fontBinding === 'brand:fontArabic' || fontBinding === 'brand:fontLatin') {
-      const family = brandStringValue(graph, fontBinding.slice(BRAND_VARIABLE_PREFIX.length))
-      if (family && family !== node.fontFamily) changes.fontFamily = family
-    }
-    if (node.boundVariables.text === 'brand:watermark') {
-      const text = brandStringValue(graph, 'watermark')
-      if (text !== null && text !== node.text) changes.text = text
-    }
-    if (Object.keys(changes).length > 0) {
-      update(node.id, changes)
-      touched.push(node.id)
-    }
+export interface BrandSwatch {
+  key: BrandColorKey
+  variableId: string
+  /** `$brand/primary` — the variable's display name. */
+  name: string
+  /** CSS colour for the swatch, from the variable's value. */
+  css: string
+}
+
+/** The two brand swatches present in a variable list, in kit order; a missing one is skipped. */
+export function brandSwatches(variables: readonly Variable[]): BrandSwatch[] {
+  const out: BrandSwatch[] = []
+  for (const key of BRAND_COLOR_KEYS) {
+    const variable = variables.find((v) => v.id === brandVariableId(key))
+    if (variable?.type !== 'COLOR') continue
+    const value = variable.valuesByMode[BRAND_MODE_ID] ?? Object.values(variable.valuesByMode)[0]
+    if (typeof value !== 'object' || !('r' in value)) continue
+    out.push({ key, variableId: variable.id, name: variable.name, css: colorToCSS(value) })
   }
-  return touched
+  return out
 }
 
 // ---------------------------------------------------------------------------

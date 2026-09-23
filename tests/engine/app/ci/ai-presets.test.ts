@@ -9,33 +9,80 @@ import {
   type AIPresetContext
 } from '@/app/ci/ai-presets'
 import type { StudioBrand } from '@/app/ci/api'
+import type { BindingsReport } from '@/app/ci/bindings'
 
 const brand: StudioBrand = {
   workspaceName: 'Nizek',
-  colors: {
-    primary: '#0f62fe',
-    secondary: '#393939',
-    accent: '#ff832b',
-    background: '#161616',
-    text: '#f4f4f4'
-  },
-  fontArabicFamily: 'IBM Plex Sans Arabic',
-  fontLatinFamily: 'IBM Plex Sans',
-  watermarkText: null,
-  assets: []
+  colors: { primary: '#0f62fe', secondary: '#393939' },
+  assets: [
+    {
+      id: 'a1',
+      name: 'Hero',
+      url: 'https://app.example.com/api/studio/templates/t/assets/a1',
+      kind: 'user-image',
+      isDefault: true,
+      contentType: 'image/png'
+    }
+  ]
+}
+
+const emptyBindings: BindingsReport = {
+  version: 'bindings-v3',
+  roles: [],
+  strayBindings: [],
+  usable: { single: false, carousel: false }
 }
 
 const ctx: AIPresetContext = {
   brand,
-  slots: {
-    bindings: [
-      { slot: 'headline', nodeId: 'n1', nodeName: 'slot:headline', maxChars: 80 },
-      { slot: 'cover', nodeId: 'n2', nodeName: 'slot:cover' }
+  bindings: {
+    version: 'bindings-v3',
+    roles: [
+      {
+        role: 'cover',
+        present: true,
+        frameId: 'f1',
+        status: 'ok',
+        reasons: [{ code: 'repeat_without_body' }],
+        bindings: [
+          {
+            name: 'content:title',
+            binding: { kind: 'content', slot: 'title' },
+            nodeId: 'n1',
+            nodeName: 'content:title',
+            nodeType: 'TEXT',
+            frameId: 'f1'
+          },
+          {
+            name: 'content:image',
+            binding: { kind: 'content', slot: 'image' },
+            nodeId: 'n2',
+            nodeName: 'content:image',
+            nodeType: 'RECTANGLE',
+            frameId: 'f1'
+          }
+        ]
+      },
+      {
+        role: 'repeat',
+        present: true,
+        frameId: 'f2',
+        status: 'missing',
+        reasons: [{ code: 'repeat_without_body' }],
+        bindings: []
+      },
+      {
+        role: 'ending',
+        present: false,
+        frameId: null,
+        status: 'missing',
+        reasons: [],
+        bindings: []
+      }
     ],
-    missingRequired: ['body'],
-    duplicates: []
+    strayBindings: [],
+    usable: { single: true, carousel: false }
   },
-  requiredSlots: ['headline', 'body', 'cover'],
   frame: { width: 1080, height: 1350 },
   selection: []
 }
@@ -61,13 +108,12 @@ describe('ai presets', () => {
     expect(s.displayText).toBe('Fit Arabic copy')
     expect(s.modelText).toContain('RTL')
     expect(s.modelText).toContain('The primary frame is 1080×1350 px.')
-    expect(s.modelText).toContain('IBM Plex Sans Arabic')
-    expect(s.modelText).toContain('slot:headline, slot:cover')
-    expect(s.modelText).toContain('Required slots still missing: body.')
-    expect(s.modelText).toContain('Text slots: headline.')
+    expect(s.modelText).toContain('$brand/primary (#0f62fe) and $brand/secondary (#393939)')
+    expect(s.modelText).toContain('brand:user-image:Hero')
+    expect(s.modelText).toContain('content:title, content:image')
+    expect(s.modelText).toContain('Still missing: repeat has no content:body.')
+    expect(s.modelText).toContain('Text slots: title.')
     expect(s.modelText).toContain('Do not export, render or fetch anything.')
-    // Colours travel by role, never as hex — the model binds variables.
-    expect(s.modelText).not.toMatch(/#[0-9a-f]{6}/i)
   })
 
   test('each preset carries its own task and the shared closing rule', () => {
@@ -75,7 +121,8 @@ describe('ai presets', () => {
     expect(texts[1]).toContain('Brand variable')
     expect(texts[2]).toContain('exactly three variants')
     expect(texts[3]).toContain('safe area')
-    for (const t of texts) expect(t).toContain('keep every slot:<name> layer name')
+    for (const t of texts)
+      expect(t).toContain('keep every content:<slot> and brand:<kind> layer name')
     expect(new Set(texts).size).toBe(4)
   })
 
@@ -84,12 +131,12 @@ describe('ai presets', () => {
       ...ctx,
       brand: null,
       frame: null,
-      slots: { bindings: [], missingRequired: [], duplicates: [] },
+      bindings: emptyBindings,
       selection: ['A', 'B', 'C', 'D', 'E', 'F', 'G']
     })
     expect(s.modelText).toContain('No brand kit is bound')
     expect(s.modelText).toContain('Use the first frame on the current page')
-    expect(s.modelText).toContain('No slot layers are bound yet.')
+    expect(s.modelText).toContain('No content: or brand: layers are bound yet.')
     expect(s.modelText).toContain('Work on the selection first (A, B, C, D, E, …).')
   })
 

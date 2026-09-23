@@ -1,43 +1,41 @@
-// CI: host ⇄ Studio postMessage protocol (ADR-058 §8, Track E3c Part B).
+// CI: host ⇄ Studio postMessage protocol (ADR-058 §8, Track E3c Part B;
+// shrunk in Track E3d-a — FB-45).
 //
 // Both directions are origin-checked: the Studio only accepts messages whose
 // `event.origin` is the configured app origin, and it only posts to that
 // origin. Messages are plain JSON objects with a `type` discriminator; the
 // `studio:` prefix is ours, the `host:` prefix is the app's.
+//
+// Since FB-45 the chrome lives INSIDE the Studio (File menu, title bar, save
+// state), so the host only needs: the token loop, errors, the saved version
+// (to refresh its own pages), the dirty flag (its `beforeunload` guard) and
+// where to navigate when the person leaves through the File menu.
 
 import { IS_BROWSER } from '@open-pencil/core/constants'
+
+export type StudioNavigateTarget =
+  | { to: 'templates' }
+  | { to: 'template'; templateId: string }
+  | { to: 'new-tab' }
 
 export type StudioToHostMessage =
   | { type: 'studio:ready'; templateId: string; version: number; proposal?: boolean }
   | { type: 'studio:dirty'; dirty: boolean }
   | { type: 'studio:saved'; version: number; kind: 'draft' | 'version' }
+  | { type: 'studio:renamed'; name: string }
   | { type: 'studio:error'; message: string }
   | { type: 'studio:token-expiring' }
-  | { type: 'studio:close-ok' }
-  | { type: 'studio:close-blocked'; dirty: true }
+  | ({ type: 'studio:navigate' } & StudioNavigateTarget)
 
-export type HostToStudioMessage =
-  | { type: 'host:token'; token: string }
-  | { type: 'host:save-version' }
-  | { type: 'host:request-close' }
-
-const HOST_MESSAGE_TYPES: ReadonlySet<HostToStudioMessage['type']> = new Set([
-  'host:token',
-  'host:save-version',
-  'host:request-close'
-])
+export type HostToStudioMessage = { type: 'host:token'; token: string }
 
 /** Narrow an untrusted `MessageEvent.data` to a host message, or `null`. */
 export function parseHostMessage(data: unknown): HostToStudioMessage | null {
   if (!data || typeof data !== 'object') return null
   const type = (data as { type?: unknown }).type
-  if (typeof type !== 'string' || !HOST_MESSAGE_TYPES.has(type as HostToStudioMessage['type']))
-    return null
-  if (type === 'host:token') {
-    const token = (data as { token?: unknown }).token
-    return typeof token === 'string' && token.length > 0 ? { type, token } : null
-  }
-  return { type } as HostToStudioMessage
+  if (type !== 'host:token') return null
+  const token = (data as { token?: unknown }).token
+  return typeof token === 'string' && token.length > 0 ? { type, token } : null
 }
 
 export interface HostBridge {

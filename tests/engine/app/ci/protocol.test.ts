@@ -26,15 +26,13 @@ function fakeWindow(): FakeWindow {
 }
 
 describe('parseHostMessage', () => {
-  test('accepts the three host messages and nothing else', () => {
+  test('accepts the token message and nothing else (FB-45 shrank the protocol)', () => {
     expect(parseHostMessage({ type: 'host:token', token: 'x' })).toEqual({
       type: 'host:token',
       token: 'x'
     })
-    expect(parseHostMessage({ type: 'host:save-version' })).toEqual({ type: 'host:save-version' })
-    expect(parseHostMessage({ type: 'host:request-close' })).toEqual({
-      type: 'host:request-close'
-    })
+    expect(parseHostMessage({ type: 'host:save-version' })).toBeNull()
+    expect(parseHostMessage({ type: 'host:request-close' })).toBeNull()
     expect(parseHostMessage({ type: 'host:token' })).toBeNull()
     expect(parseHostMessage({ type: 'studio:ready' })).toBeNull()
     expect(parseHostMessage('host:token')).toBeNull()
@@ -75,14 +73,17 @@ describe('createHostBridge', () => {
     const received: unknown[] = []
     const stop = bridge.onMessage((message) => received.push(message))
 
-    self.dispatch({ type: 'host:save-version' }, 'https://evil.example.com', parent)
-    self.dispatch({ type: 'host:save-version' }, 'https://app.example.com', {})
-    self.dispatch({ type: 'host:save-version' }, 'https://app.example.com', parent)
+    self.dispatch({ type: 'host:token', token: 'evil' }, 'https://evil.example.com', parent)
+    self.dispatch({ type: 'host:token', token: 'stranger' }, 'https://app.example.com', {})
+    self.dispatch({ type: 'host:token', token: 'first' }, 'https://app.example.com', parent)
     self.dispatch({ type: 'host:token', token: 'new' }, 'https://app.example.com', parent)
-    expect(received).toEqual([{ type: 'host:save-version' }, { type: 'host:token', token: 'new' }])
+    expect(received).toEqual([
+      { type: 'host:token', token: 'first' },
+      { type: 'host:token', token: 'new' }
+    ])
 
     stop()
-    self.dispatch({ type: 'host:save-version' }, 'https://app.example.com', parent)
+    self.dispatch({ type: 'host:token', token: 'late' }, 'https://app.example.com', parent)
     expect(received).toHaveLength(2)
   })
 })

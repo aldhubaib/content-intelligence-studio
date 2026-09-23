@@ -18,7 +18,12 @@ import IconZoomOut from '~icons/lucide/zoom-out'
 import type { CommandPaletteGroup, CommandPaletteItem, MenuEntry } from '@open-pencil/vue'
 import { shortcutPlatform, useEditorCommands, useI18n } from '@open-pencil/vue'
 
-import { hostedHidesMenuItem, hostedMenuLabel } from '@/app/ci/menu'
+import {
+  collapseMenuSeparators,
+  hostedHidesMenuItem,
+  hostedMenuActions,
+  hostedMenuLabel
+} from '@/app/ci/menu'
 import { useEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
 import { setSnappingPreference } from '@/app/settings/preferences/apply'
@@ -166,7 +171,9 @@ export function useAppMenu() {
     'export-svg': () => exportSelection('svg'),
     'export-pptx': () => exportSelection('pptx'),
     'export-fig': () => exportSelection('fig'),
-    ...createSharedEditorMenuActions(setTheme)
+    ...createSharedEditorMenuActions(setTheme),
+    // CI: Back to templates / Save as new template / Open in new tab (FB-45).
+    ...hostedMenuActions
   }
 
   function itemAction(item: AppMenuActionItem): (() => void) | undefined {
@@ -316,7 +323,10 @@ export function useAppMenu() {
     return {
       label: groupLabel(group),
       paletteIcon: group.paletteIcon ? APP_MENU_ICONS[group.paletteIcon] : undefined,
-      items: group.items.map(buildEntry).filter((item): item is MenuEntry => item !== null)
+      // CI: hidden entries leave stray separators behind — collapse them.
+      items: collapseMenuSeparators(
+        group.items.map(buildEntry).filter((item): item is MenuEntry => item !== null)
+      )
     }
   }
 

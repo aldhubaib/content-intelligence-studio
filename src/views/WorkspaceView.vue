@@ -185,7 +185,8 @@ onUnmounted(() => {
     <FontStatusBanner />
     <RenameSelectionDialog />
     <CommandPalette />
-    <TabBar />
+    <!-- CI: single-document mode (FB-45) — the menu bar is the first row in the hosted Studio. -->
+    <TabBar v-if="!isHosted()" />
     <HomeWorkspace v-show="activeTab?.kind === 'home'" @new-document="createDocumentInCurrentTab" />
     <EditorWorkspace v-if="activeTab?.kind !== 'home'" />
   </div>
