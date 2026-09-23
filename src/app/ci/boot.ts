@@ -11,6 +11,7 @@ import type { EditorStore } from '@/app/editor/session'
 import { toast } from '@/app/shell/ui'
 
 import { hostedConfig, hostedConfigError, isHosted } from './hosted'
+import { disableLocalRecovery, discardStaleRecoverySnapshots } from './recovery'
 import { setHostedSaveHandler } from './save-override'
 import { createHostedSession, type HostedSession } from './session'
 
@@ -27,6 +28,10 @@ export function bootHostedStudio(store: EditorStore): Promise<HostedSession | nu
       return null
     }
     if (!isHosted() || !hostedConfig) return null
+    // The server draft slot is the only recovery (E3c.1 Part A): switch the local
+    // one off before the session loads, then sweep the store without waiting.
+    disableLocalRecovery()
+    void discardStaleRecoverySnapshots()
     const session = createHostedSession({ config: hostedConfig, store })
     hostedSession.value = session
     setHostedSaveHandler(() => session.saveVersion())

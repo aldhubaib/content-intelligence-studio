@@ -3,6 +3,7 @@ import { computed } from 'vue'
 
 import { type Locale, useI18n } from '@open-pencil/vue'
 
+import { isHosted } from '@/app/ci/hosted'
 import { recoveryEnabled, setRecoveryEnabled } from '@/app/document/recovery/preferences'
 import { setSnappingPreference } from '@/app/settings/preferences/apply'
 import { appPreferences } from '@/app/settings/preferences/store'
@@ -19,6 +20,8 @@ const { availableLocales, locale, localeLabels, menu, recovery, setLocale, setti
 
 const { theme } = useAppTheme()
 const selectUI = { trigger: 'w-full sm:w-52' }
+// CI: the hosted Studio recovers from the app's server draft, never from this browser (ADR-058 §8, E3c.1).
+const showRecoverySection = !isHosted()
 
 const language = computed<Locale>({
   get: () => locale.value,
@@ -101,7 +104,7 @@ const snapToPixelGrid = computed({
       </SettingsGroup>
     </SettingsSection>
 
-    <SettingsSection>
+    <SettingsSection v-if="showRecoverySection">
       <template #title>{{ recovery.settingsTitle }}</template>
 
       <SettingsGroup>

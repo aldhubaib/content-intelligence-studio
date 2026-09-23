@@ -5,6 +5,7 @@ import { useRoute } from 'vue-router'
 
 import { useI18n } from '@open-pencil/vue'
 
+import { isHosted } from '@/app/ci/hosted'
 import type { RecoverySnapshotMeta } from '@/app/document/recovery'
 import { recoveryEnabled } from '@/app/document/recovery/preferences'
 import { useNotificationMessages } from '@/app/i18n/notifications'
@@ -56,7 +57,8 @@ async function discard(snapshot: RecoverySnapshotMeta): Promise<void> {
 }
 
 onMounted(async () => {
-  if (route.path !== '/' || !recoveryEnabled.value) return
+  // CI: this dialog mounts before the hosted boot sets the runtime override (ADR-058 §8, E3c.1).
+  if (isHosted() || route.path !== '/' || !recoveryEnabled.value) return
   try {
     snapshots.value = await listRecoverySnapshots()
     open.value = snapshots.value.length > 0
