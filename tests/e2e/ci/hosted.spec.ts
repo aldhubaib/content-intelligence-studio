@@ -120,6 +120,40 @@ test.describe('hosted mode', () => {
     await expect(page.getByTestId('properties-tab-ai')).toHaveCount(0)
     await expect(page.getByTestId('properties-tab-design')).toBeVisible()
 
+    // E3c.1 Part B: the 4:5 frame is fitted to the canvas on open — zoomed out,
+    // fully inside the viewport — instead of a corner at 100 %.
+    const fit = await page.evaluate((frameId) => {
+      const store = window.openPencil?.getStore?.()
+      const frame = store?.graph.getNode(frameId)
+      const canvas = document.querySelector('[data-test-id="canvas-element"]')
+      if (!store || !frame || !canvas) throw new Error('store, frame or canvas missing')
+      const { zoom, panX, panY } = store.state
+      return {
+        zoom,
+        left: panX + frame.x * zoom,
+        top: panY + frame.y * zoom,
+        right: panX + (frame.x + frame.width) * zoom,
+        bottom: panY + (frame.y + frame.height) * zoom,
+        width: canvas.clientWidth,
+        height: canvas.clientHeight
+      }
+    }, FRAME_ID)
+    expect(fit.zoom).toBeLessThan(1)
+    expect(fit.left).toBeGreaterThanOrEqual(0)
+    expect(fit.top).toBeGreaterThanOrEqual(0)
+    expect(fit.right).toBeLessThanOrEqual(fit.width + 1)
+    expect(fit.bottom).toBeLessThanOrEqual(fit.height + 1)
+
+    // E3c.1 Part A: no browser-local recovery — no "Recover unsaved work" dialog,
+    // the runtime override is off and Settings has no "Preserve unsaved work" row.
+    await expect(page.getByTestId('recovery-dialog')).toHaveCount(0)
+    await page.getByTestId('app-settings-trigger').click()
+    await expect(page.getByTestId('app-settings-dialog')).toBeVisible()
+    await expect(page.getByTestId('settings-snap-geometry')).toBeVisible()
+    await expect(page.getByTestId('settings-recovery-enabled')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('app-settings-dialog')).toHaveCount(0)
+
     // An edit makes the session dirty …
     await page.evaluate((frameId) => {
       const store = window.openPencil?.getStore?.()
@@ -198,5 +232,8 @@ test.describe('hosted mode', () => {
     await expect(page.locator('html')).not.toHaveAttribute('data-palette', /.+/)
     await expect(page.getByTestId('tabbar-new')).toBeVisible()
     await expect(page.getByTestId('properties-tab-ai')).toBeVisible()
+    // Upstream keeps its local recovery preference (E3c.1 hides it hosted only).
+    await page.getByTestId('app-settings-trigger').click()
+    await expect(page.getByTestId('settings-recovery-enabled')).toBeVisible()
   })
 })

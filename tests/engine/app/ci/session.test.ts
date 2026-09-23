@@ -135,8 +135,8 @@ function frameOf(store: EditorStore): SceneNode {
 
 let session: HostedSession | null = null
 
-// No canvas here: `fitCurrentPageToViewport` yields through rAF and the page
-// switch waits for the renderer to present — stand both in.
+// No canvas here: upstream document paths yield through rAF and the load waits
+// for the renderer to present — stand both in (`booted()` marks the canvas ready).
 const testGlobal: { requestAnimationFrame?: (callback: (time: number) => void) => number } =
   globalThis
 testGlobal.requestAnimationFrame ??= (callback) => {
@@ -151,7 +151,17 @@ afterEach(() => {
 
 async function booted(data = payload()) {
   const store = createEditorStore()
+  // Stand in for the canvas: the surface exists and every scene version is presented.
+  store.markCanvasReady()
   store.preparationController.acknowledgePresentation(Number.MAX_SAFE_INTEGER)
+  // Records what the page held at each fit, so a test can tell "the loaded frame"
+  // from "an empty page".
+  const fits: string[][] = []
+  const zoomToFit = store.zoomToFit
+  store.zoomToFit = () => {
+    fits.push(store.graph.getChildren(store.state.currentPageId).map((node) => node.name))
+    zoomToFit()
+  }
   const remote = fakeAPI(data)
   const host = fakeBridge()
   const clock = fakeScheduler()
@@ -169,7 +179,7 @@ async function booted(data = payload()) {
     setTitle: (title) => titles.push(title)
   })
   await session.load()
-  return { store, remote, host, clock, session, aiApplied, titles }
+  return { store, remote, host, clock, session, aiApplied, titles, fits }
 }
 
 describe('hosted session', () => {
@@ -190,6 +200,25 @@ describe('hosted session', () => {
     store.state.documentName = 'Landscape card'
     await settle()
     expect(titles.at(-1)).toBe('Landscape card · Content Intelligence Studio')
+  })
+
+  test('E3c.1 Part B: the frame is fitted to the viewport exactly once per load, and never again', async () => {
+    const { store, host, clock, fits, session } = await booted()
+    // Once, with the loaded graph in place (the fit is what the first frame shows).
+    expect(fits).toEqual([['Portrait']])
+    expect(session.status.value).toEqual({ kind: 'ready' })
+    // 1080×1350 plus the engine's 80 px padding inside the 1920×1080 test viewport.
+    expect(store.state.zoom).toBeCloseTo(1080 / (1350 + 160), 3)
+    expect(store.state.zoom).toBeLessThan(1)
+
+    // Autosave, a token refresh and Save version leave the viewport alone.
+    const frame = frameOf(store)
+    store.updateNode(frame.id, { name: 'Renamed' })
+    clock.tick()
+    await settle()
+    host.send({ type: 'host:token', token: 'rotated' })
+    expect(await session.saveVersion()).toBe(true)
+    expect(fits).toHaveLength(1)
   })
 
   test('loads the template into the store, names it, reports ready and stays clean', async () => {

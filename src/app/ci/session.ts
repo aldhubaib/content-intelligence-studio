@@ -245,10 +245,17 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       // A restored draft is what the person sees but not yet a version: leave the
       // change tracker dirty so the next autosave / Save version persists it.
       if (!data.draft) markSaved()
-      // Same tail as the upstream `.fig` open path: fit, then ask for a frame.
-      await store.fitCurrentPageToViewport()
+      // Fit the frame to the viewport on open (E3c.1 Part B), the way the demo does
+      // it (`src/app/demo/document.ts`): the engine only knows the real canvas size
+      // once the surface exists, so wait for `canvasReady`, fit once, ask for a
+      // frame and hold `ready` until that frame has been presented. Viewport state
+      // is not content — nothing here reaches the saved payload.
+      await store.canvasReady
+      load.signal.throwIfAborted()
+      store.zoomToFit()
       load.update({ phase: 'preparing-render', detail: data.name })
       store.requestRender()
+      await waitForFirstFrame(load.id)
       load.complete()
     } catch (error) {
       if (!load.signal.aborted) {
@@ -279,6 +286,19 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     stopAutosave = autosave.start(() => {
       if (dirty.value && !saving && status.value.kind === 'ready') void saveDraft()
     })
+  }
+
+  /**
+   * Resolve once the canvas has presented the loaded scene. A background tab
+   * gets no animation frames, so the presentation wait can time out — that is
+   * not a failed load: log it and let the session become ready anyway.
+   */
+  async function waitForFirstFrame(loadId: number): Promise<void> {
+    try {
+      await store.preparationController.waitForPresentation(loadId, store.state.sceneVersion)
+    } catch (error) {
+      console.warn('[CI Studio] first frame not presented yet, continuing', error)
+    }
   }
 
   async function save(kind: 'draft' | 'version', baseVersion = version.value): Promise<boolean> {
