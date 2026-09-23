@@ -78,11 +78,20 @@ function payload(overrides: Partial<StudioTemplatePayload> = {}): StudioTemplate
 
 function fakeAPI(data: StudioTemplatePayload) {
   const saves: Array<{ kind: string; baseVersion: number; name?: string }> = []
+  /** The document of every save, as sent — the preview must never be in it. */
+  const savedDocuments: unknown[] = []
   const renames: string[] = []
   const duplicates: Array<{ name?: string }> = []
+  const jsonFetches: string[] = []
   let nextVersion = data.version
   let failNext: Error | null = null
+  let candidates: unknown = { candidates: [] }
   const api: StudioAPI = {
+    fetchJSON: async <T>(url: string) => {
+      jsonFetches.push(url)
+      if (candidates instanceof Error) throw candidates
+      return candidates as T
+    },
     apiOrigin: CONFIG.apiOrigin,
     loadTemplate: async () => data,
     renameTemplate: async (name) => {
@@ -95,6 +104,7 @@ function fakeAPI(data: StudioTemplatePayload) {
     },
     saveTemplate: async (body) => {
       saves.push({ kind: body.kind, baseVersion: body.baseVersion, name: body.name })
+      savedDocuments.push(body.document)
       if (failNext) {
         const error = failNext
         failNext = null
@@ -109,10 +119,15 @@ function fakeAPI(data: StudioTemplatePayload) {
   return {
     api,
     saves,
+    savedDocuments,
     renames,
     duplicates,
+    jsonFetches,
     failNextWith(error: Error) {
       failNext = error
+    },
+    answerCandidatesWith(value: unknown) {
+      candidates = value
     }
   }
 }
@@ -193,7 +208,13 @@ afterEach(() => {
   session = null
 })
 
-async function booted(data = payload()) {
+async function booted(
+  data = payload(),
+  options: {
+    config?: Partial<typeof CONFIG> & { previewCandidateId?: string | null }
+    beforeLoad?: (remote: ReturnType<typeof fakeAPI>) => void
+  } = {}
+) {
   const store = createEditorStore()
   // Stand in for the canvas: the surface exists and every scene version is presented.
   store.markCanvasReady()
@@ -207,12 +228,13 @@ async function booted(data = payload()) {
     zoomToFit()
   }
   const remote = fakeAPI(data)
+  options.beforeLoad?.(remote)
   const host = fakeBridge()
   const clock = fakeScheduler()
   const aiApplied: Array<StudioTemplatePayload['ai']> = []
   const titles: string[] = []
   session = createHostedSession({
-    config: CONFIG,
+    config: { ...CONFIG, ...options.config },
     store,
     api: remote.api,
     bridge: host.bridge,
@@ -434,5 +456,129 @@ describe('hosted session', () => {
     )
     expect([...store.graph.getAllNodes()].some((node) => node.name === 'From draft')).toBe(true)
     expect(session.dirty.value).toBe(true)
+  })
+
+  describe('E3d-b1: Preview with real content', () => {
+    const PREVIEW = {
+      candidatesUrl: `${CONFIG.apiOrigin}/api/studio/templates/tpl-1/preview-candidates`,
+      sampleText: {
+        title: 'عنوان تجريبي',
+        subtitle: 'سطر ثانٍ',
+        body: 'نص تجريبي',
+        cta: 'اعرف أكثر',
+        articleUrl: 'https://example.invalid/articles/preview'
+      }
+    }
+    const CANDIDATE = {
+      id: 'c0ffee00-0000-4000-8000-000000000001',
+      title: 'ثلاث عادات تغيّر يومك',
+      subtitle: 'Weekly LinkedIn insight',
+      body: 'نص المرشّح.',
+      cta: 'اقرأ المقال',
+      articleUrl: 'https://nizek.example/articles/three-habits',
+      format: 'LINKEDIN_POST',
+      formatLabel: 'LinkedIn Post',
+      approvedAt: '2026-09-23T10:00:00Z',
+      imageUrl: null
+    }
+
+    /** A template with a `content:title` text layer on the cover. */
+    function titledPayload(overrides: Partial<StudioTemplatePayload> = {}) {
+      const graph = templateGraph()
+      const cover = [...graph.getAllNodes()].find((node) => node.name === 'cover')
+      if (!cover) throw new Error('Expected the cover frame')
+      graph.createNode('TEXT', cover.id, {
+        name: 'content:title',
+        text: 'Title placeholder',
+        width: 900,
+        height: 120,
+        fontSize: 48
+      })
+      return payload({ document: serializeGraph(graph, '0.15.1'), preview: PREVIEW, ...overrides })
+    }
+
+    function titleOf(store: EditorStore): SceneNode {
+      const node = [...store.graph.getAllNodes()].find((n) => n.name === 'content:title')
+      if (!node) throw new Error('Expected content:title')
+      return node
+    }
+
+    test('a preview shows on the canvas, is not an edit, and every save sends the document without it', async () => {
+      const { store, remote, session, host } = await booted(titledPayload())
+      const before = JSON.stringify(serializeGraph(store.graph, '0.15.1'))
+      const postedBefore = host.posted.length
+      session.preview.overlay.setContent({ kind: 'sample' })
+      expect(titleOf(store).text).toBe(PREVIEW.sampleText.title)
+      expect(session.dirty.value).toBe(false)
+      expect(host.posted.slice(postedBefore).filter((m) => m.type === 'studio:dirty')).toEqual([])
+
+      // A real edit elsewhere, then Save version while the preview is still up.
+      store.updateNode(frameOf(store).id, { name: 'cover' })
+      store.updateNodeWithUndo(frameOf(store).id, { x: 10 }, 'Move')
+      expect(await session.saveVersion()).toBe(true)
+      const sent = JSON.stringify(remote.savedDocuments.at(-1))
+      expect(sent).not.toContain(PREVIEW.sampleText.title)
+      expect(sent).toContain('"Title placeholder"')
+      // The preview outlives the save; the canvas still shows it.
+      expect(titleOf(store).text).toBe(PREVIEW.sampleText.title)
+
+      session.preview.overlay.setContent({ kind: 'none' })
+      expect(titleOf(store).text).toBe('Title placeholder')
+      const after = structuredClone(serializeGraph(store.graph, '0.15.1'))
+      const original = JSON.parse(before)
+      // Only the move is a difference.
+      const frameAfter = after.graph.nodes.find(([, n]: [string, SceneNode]) => n.name === 'cover')[1]
+      const frameBefore = original.graph.nodes.find(([, n]: [string, SceneNode]) => n.name === 'cover')[1]
+      expect(frameAfter.x).toBe(10)
+      expect(frameBefore.x).toBe(0)
+    })
+
+    test('candidates are fetched once with the bearer, cached, and refreshed on demand; a failure reads unavailable', async () => {
+      const { remote, session } = await booted(titledPayload(), {
+        beforeLoad: (r) => r.answerCandidatesWith({ candidates: [CANDIDATE] })
+      })
+      expect(session.preview.candidates.state.value.kind).toBe('idle')
+      const first = await session.preview.candidates.load()
+      expect(first.map((c) => c.id)).toEqual([CANDIDATE.id])
+      expect(remote.jsonFetches).toEqual([PREVIEW.candidatesUrl])
+      await session.preview.candidates.load()
+      expect(remote.jsonFetches).toHaveLength(1)
+      expect(session.preview.candidates.state.value.kind).toBe('ready')
+
+      remote.answerCandidatesWith(new Error('404'))
+      expect(await session.preview.candidates.load(true)).toEqual([])
+      expect(remote.jsonFetches).toHaveLength(2)
+      expect(session.preview.candidates.state.value).toEqual({ kind: 'unavailable' })
+    })
+
+    test('a payload without a preview block reads unavailable and paints nothing', async () => {
+      const { session, store, remote } = await booted(titledPayload({ preview: null }))
+      expect(await session.preview.candidates.load()).toEqual([])
+      expect(session.preview.candidates.state.value).toEqual({ kind: 'unavailable' })
+      expect(remote.jsonFetches).toEqual([])
+      session.preview.overlay.setContent({ kind: 'sample' })
+      expect(titleOf(store).text).toBe('Title placeholder')
+    })
+
+    test('?preview=<candidate id> preselects that candidate on open when the list holds it', async () => {
+      const { store, session } = await booted(titledPayload(), {
+        config: { previewCandidateId: CANDIDATE.id },
+        beforeLoad: (r) => r.answerCandidatesWith({ candidates: [CANDIDATE] })
+      })
+      await settle()
+      expect(session.preview.overlay.content.value).toEqual({ kind: 'candidate', candidate: CANDIDATE })
+      expect(titleOf(store).text).toBe(CANDIDATE.title)
+      expect(session.dirty.value).toBe(false)
+    })
+
+    test('an unknown ?preview= leaves the selection at None', async () => {
+      const { store, session } = await booted(titledPayload(), {
+        config: { previewCandidateId: 'c0ffee00-0000-4000-8000-00000000dead' },
+        beforeLoad: (r) => r.answerCandidatesWith({ candidates: [CANDIDATE] })
+      })
+      await settle()
+      expect(session.preview.overlay.content.value).toEqual({ kind: 'none' })
+      expect(titleOf(store).text).toBe('Title placeholder')
+    })
   })
 })

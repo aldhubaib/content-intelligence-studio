@@ -97,6 +97,38 @@ export interface StudioTemplatePayload {
   draft?: { document: SerializedDocument; savedAt: string } | null
   /** Track E4 (ADR-061 §4): true while this template is an AI proposal no person has saved yet. */
   proposal?: boolean
+  /**
+   * Track E3d-b1 (FB-44 §6): where the content **Preview with ▾** menu asks for
+   * the workspace's Approved Arabic candidates, and the **Sample text** words.
+   * Absent on an older app → the menu says "Preview unavailable".
+   */
+  preview?: StudioPreviewPayload | null
+}
+
+export interface StudioPreviewPayload {
+  /** `GET` (bearer, app origin) → `{ candidates: StudioPreviewCandidate[] }`. */
+  candidatesUrl: string
+  sampleText: StudioPreviewContent
+}
+
+/** The five `content:*` text values a preview fills — one candidate, or the sample. */
+export interface StudioPreviewContent {
+  title: string
+  subtitle: string
+  body: string
+  cta: string
+  articleUrl: string
+}
+
+export interface StudioPreviewCandidate extends StudioPreviewContent {
+  id: string
+  /** The request's format (`LINKEDIN_POST`, …) or null for an item candidate. */
+  format: string | null
+  /** "LinkedIn Post" — the menu's format Tag; null with `format`. */
+  formatLabel: string | null
+  approvedAt: string
+  /** Bearer-gated image on the app origin for `content:image`, or null → the layer's placeholder stays. */
+  imageUrl: string | null
 }
 
 /** The three galleries as the layers name them: `brand:<kind>[:<asset name>]` (FB-44 §5). */
@@ -195,6 +227,8 @@ export interface StudioAPI {
   ): Promise<StudioDuplicateResponse>
   /** Fetch bytes (fonts, brand media) from a URL on the app origin with the bearer. */
   fetchBytes(url: string, signal?: AbortSignal): Promise<Uint8Array>
+  /** Fetch JSON from a URL on the app origin with the bearer (the preview candidates list). */
+  fetchJSON<T>(url: string, signal?: AbortSignal): Promise<T>
   /** Absolute URL of the AI proxy the panel's provider posts to. */
   aiChatURL(): string
   readonly apiOrigin: string
@@ -279,6 +313,11 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
       const response = await request(url, { method: 'GET', headers: { Accept: '*/*' }, signal })
       if (!response.ok) throw await readError(response)
       return new Uint8Array(await response.arrayBuffer())
+    },
+    async fetchJSON<T>(url: string, signal?: AbortSignal): Promise<T> {
+      const response = await request(url, { method: 'GET', signal })
+      if (!response.ok) throw await readError(response)
+      return (await response.json()) as T
     },
     aiChatURL() {
       return `${options.apiOrigin}/api/studio/ai/chat`

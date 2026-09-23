@@ -11,8 +11,9 @@
 // dragged in from the Assets panel is a bound layer the moment it lands.
 //
 // A `brand:<kind>[:<name>]` layer already in the document opens with its asset
-// painted in (`previewBrandBindings`): the named one, else the gallery's
-// default — the same resolution the renderer applies (FB-44 §5).
+// painted in — the named one, else the gallery's default (`resolveBrandAsset`,
+// the same resolution the renderer applies, FB-44 §5) — as a PREVIEW through
+// `preview-overlay.ts` (Track E3d-b1): the document never holds the bytes.
 
 import type { SceneGraph as SceneGraphType, SceneNode } from '@open-pencil/scene-graph'
 import { SceneGraph } from '@open-pencil/scene-graph'
@@ -23,12 +24,10 @@ import type { ViewportSize } from '@/app/document/io/types'
 import type { EditorStore } from '@/app/editor/session'
 import { useLibraryService } from '@/app/libraries/service'
 
-import type { StudioAPI, StudioBindingsVocabulary, StudioBrand, StudioBrandAsset } from './api'
-import { bindingName, listBindings, PLUGIN_ID } from './bindings'
+import type { StudioAPI, StudioBrand, StudioBrandAsset } from './api'
+import { bindingName, PLUGIN_ID } from './bindings'
 
 export const BRAND_LIBRARY_PREFIX = 'ci-brand:'
-/** Plugin key on a previewed layer: the image hash the Studio painted in for the person. */
-export const PLUGIN_BRAND_PREVIEW_KEY = 'brandPreview'
 
 export function brandLibraryId(workspaceSlug: string): string {
   const safe = workspaceSlug.replace(/[^a-zA-Z0-9._:-]/g, '-').slice(0, 100) || 'workspace'
@@ -240,63 +239,6 @@ export function resolveBrandAsset(
     return ofKind.find((a) => a.name.toLowerCase() === wanted) ?? null
   }
   return ofKind.find((a) => a.isDefault) ?? ofKind.at(0) ?? null
-}
-
-export interface BrandPreviewReport {
-  painted: string[]
-  /** Bindings with no asset behind them — "No dark logo yet" territory. */
-  unresolved: string[]
-}
-
-/**
- * Paint every brand-bound shape layer with its asset so the template opens the
- * way it renders. Goes through the store (undoable, dirty) — the caller decides
- * whether the document stays "saved" afterwards. Text layers and layers already
- * showing the same image are left alone.
- */
-export function previewBrandBindings(
-  store: EditorStore,
-  loaded: readonly LoadedAsset[],
-  vocabulary: StudioBindingsVocabulary
-): BrandPreviewReport {
-  const report: BrandPreviewReport = { painted: [], unresolved: [] }
-  const assets = loaded.map((l) => l.asset)
-  for (const ref of listBindings(store.graph, vocabulary, store.state.currentPageId)) {
-    if (ref.binding.kind !== 'brand' || ref.nodeType === 'TEXT') continue
-    const asset = resolveBrandAsset(assets, ref.binding)
-    const entry = asset ? loaded.find((l) => l.asset.id === asset.id) : undefined
-    if (!asset || !entry) {
-      report.unresolved.push(ref.name)
-      continue
-    }
-    const node = store.graph.getNode(ref.nodeId)
-    if (!node) continue
-    const hash = computeImageHash(entry.bytes)
-    const already = node.fills.some((f) => f.type === 'IMAGE' && f.imageHash === hash)
-    if (already) continue
-    if (!store.graph.images.has(hash)) store.graph.images.set(hash, entry.bytes)
-    const pluginData = [
-      ...(Array.isArray(node.pluginData) ? node.pluginData : []).filter(
-        (e) => !(e.pluginId === PLUGIN_ID && e.key === PLUGIN_BRAND_PREVIEW_KEY)
-      ),
-      { pluginId: PLUGIN_ID, key: PLUGIN_BRAND_PREVIEW_KEY, value: hash }
-    ]
-    store.updateNode(ref.nodeId, {
-      fills: [
-        {
-          type: 'IMAGE',
-          color: BLACK,
-          opacity: 1,
-          visible: true,
-          imageHash: hash,
-          imageScaleMode: asset.kind === 'user-image' ? 'FILL' : 'FIT'
-        }
-      ],
-      pluginData
-    })
-    report.painted.push(ref.name)
-  }
-  return report
 }
 
 export type { SceneNode }

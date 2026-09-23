@@ -19,6 +19,8 @@ export interface HostedConfig {
   readonly apiOrigin: string
   /** The initial bearer; refreshed through `host:token`. */
   readonly initialToken: string
+  /** Track E3d-b1: `?preview=<candidate id>` preselects that Approved candidate in **Preview with ▾**. */
+  readonly previewCandidateId?: string | null
 }
 
 const UUID_LIKE = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/
@@ -47,7 +49,14 @@ export function parseHostedConfig(search: string): HostedConfig | null {
   } catch {
     throw new Error('Hosted Studio: `api` is not a valid origin')
   }
-  return { templateId: doc, workspaceSlug: ws, apiOrigin: origin, initialToken: token }
+  const preview = params.get('preview')
+  return {
+    templateId: doc,
+    workspaceSlug: ws,
+    apiOrigin: origin,
+    initialToken: token,
+    previewCandidateId: preview && UUID_LIKE.test(preview) ? preview : null
+  }
 }
 
 /**

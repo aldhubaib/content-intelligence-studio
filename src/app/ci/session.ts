@@ -35,35 +35,19 @@ import {
   migrateLegacyBindings,
   type BindingsReport
 } from './bindings'
-import { installBrandLibrary, previewBrandBindings, type BrandLibraryReport } from './brand-library'
-import { deserializeGraph, serializeGraph } from './document'
+import { installBrandLibrary, type BrandLibraryReport } from './brand-library'
+import { HOSTED_COPY } from './copy'
+import { deserializeGraph } from './document'
 import { installHostedFonts, type HostedFontReport } from './fonts'
 import { hostedToken, scrubTokenFromLocation, type HostedConfig } from './hosted'
+import { createSessionPreview, type SessionPreview } from './preview-candidates'
 import { createHostBridge, type HostBridge, type StudioNavigateTarget } from './protocol'
 
 export const AUTOSAVE_INTERVAL_MS = 30_000
 /** The engine version this Studio is; written into every saved envelope. */
 export const STUDIO_ENGINE_VERSION = '0.15.1'
 
-export const HOSTED_COPY = {
-  conflict:
-    'Someone saved a newer version. Reload to see it, or keep editing and save as a new version.',
-  conflictAction: 'Save as new version',
-  savedVersion: 'Version saved.',
-  draftRestored: (time: string) => `Restored your unsaved draft from ${time}.`,
-  sessionExpired: 'Your session with the Studio expired. Reload the page to continue.',
-  loadFailed: (message: string) => `The template could not be opened: ${message}`,
-  fontsMissing: (count: number) =>
-    count === 1 ? '1 brand font could not be loaded.' : `${count} brand fonts could not be loaded.`,
-  noBrandMedia: 'This workspace has no user images or logos in its brand kit yet.',
-  migrated: (count: number) =>
-    count === 1
-      ? '1 layer was renamed to the new content: name. Save a version to keep it.'
-      : `${count} layers were renamed to the new content: names. Save a version to keep them.`,
-  renameFailed: (message: string) => `The template could not be renamed: ${message}`,
-  duplicated: (name: string) => `Saved as “${name}”. Opening it…`,
-  duplicateFailed: (message: string) => `Save as new template failed: ${message}`
-} as const
+export { HOSTED_COPY } from './copy'
 
 /** Rename debounce: the title bar commits on blur / Enter, the API is asked once the name settles. */
 export const RENAME_DEBOUNCE_MS = 400
@@ -121,6 +105,8 @@ export interface HostedSession {
   readonly fontReport: Ref<HostedFontReport | null>
   readonly brandReport: Ref<BrandLibraryReport | null>
   readonly aiEnabled: ComputedRef<boolean>
+  /** Track E3d-b1: Preview with real content — overlay + Approved candidates; never saved. */
+  readonly preview: SessionPreview
   /** Load the template into the store; resolves when the canvas shows it. */
   load(): Promise<void>
   /** File → Save version / ⌘S. */
@@ -224,6 +210,13 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     if (s.kind === 'saving') return { kind: 'saving' }
     if (s.kind === 'conflict') return { kind: 'conflict' }
     return dirty.value ? { kind: 'unsaved' } : { kind: 'saved', version: version.value }
+  })
+
+  // Track E3d-b1 (FB-44 §6): preview values live in the overlay only; `preview.serialize` is what every save sends.
+  const preview = createSessionPreview(store, api, {
+    vocabulary: () => vocabulary.value,
+    payload: () => payload.value,
+    onUnauthorized: () => bridge.post({ type: 'studio:token-expiring' })
   })
 
   const disposers: Array<() => void> = []
@@ -384,16 +377,14 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       ...(data.proposal ? { proposal: true } : {})
     })
 
+    preview.open(config.previewCandidateId)
+
     if (data.brand && !options.skipBrandLibrary) {
       const brand = data.brand
       void installBrandLibrary(store, api, brand, config.workspaceSlug, {
         onLoaded: (loaded) => {
-          // A `brand:<kind>[:<name>]` layer opens with its asset painted in (FB-44 §5).
-          // A preview is not an edit: a clean document stays "Saved".
-          const wasDirty = dirty.value
-          const preview = previewBrandBindings(store, loaded, vocabulary.value)
-          if (preview.painted.length > 0 && !wasDirty) markSaved()
-          if (preview.painted.length > 0) store.requestRender()
+          // A `brand:*` layer opens with its asset painted in (FB-44 §5) as a PREVIEW (E3d-b1) — never in the document.
+          preview.overlay.setBrandAssets(loaded.map(({ asset, bytes }) => ({ asset, bytes })))
         }
       })
         .then((report) => {
@@ -431,7 +422,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     const sceneVersionAtCapture = store.state.sceneVersion
     saving = (async () => {
       try {
-        const document = serializeGraph(store.graph, STUDIO_ENGINE_VERSION)
+        const document = preview.overlay.serialize(STUDIO_ENGINE_VERSION)
         const response = await api.saveTemplate({
           document,
           baseVersion,
@@ -490,7 +481,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   async function saveAsNewTemplate(): Promise<boolean> {
     if (status.value.kind === 'loading' || status.value.kind === 'error') return false
     try {
-      const document = serializeGraph(store.graph, STUDIO_ENGINE_VERSION)
+      const document = preview.overlay.serialize(STUDIO_ENGINE_VERSION)
       const result = await api.duplicateTemplate({
         document,
         name: `${store.state.documentName} copy`
@@ -567,6 +558,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     if (renameTimer) clearTimeout(renameTimer)
     stopAutosave?.()
     for (const stop of disposers) stop()
+    preview.dispose()
   }
 
   return {
@@ -582,6 +574,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     fontReport,
     brandReport,
     aiEnabled,
+    preview,
     load,
     saveVersion,
     saveDraft,
