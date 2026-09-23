@@ -23,10 +23,11 @@ describe('parseHostedConfig', () => {
   })
 
   test('E3d-b1: ?preview= carries a candidate id only when it looks like one', () => {
-    const base = '?doc=3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f&ws=nizek&token=t&api=https://app.example.com'
-    expect(parseHostedConfig(`${base}&preview=c0ffee00-0000-4000-8000-000000000001`).previewCandidateId).toBe(
-      'c0ffee00-0000-4000-8000-000000000001'
-    )
+    const base =
+      '?doc=3f1c2c4e-0f2a-4e1b-9c1d-1a2b3c4d5e6f&ws=nizek&token=t&api=https://app.example.com'
+    expect(
+      parseHostedConfig(`${base}&preview=c0ffee00-0000-4000-8000-000000000001`).previewCandidateId
+    ).toBe('c0ffee00-0000-4000-8000-000000000001')
     expect(parseHostedConfig(`${base}&preview=<script>`).previewCandidateId).toBeNull()
     expect(parseHostedConfig(base).previewCandidateId).toBeNull()
   })

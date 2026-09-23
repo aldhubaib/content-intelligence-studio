@@ -8,6 +8,8 @@ import { hostedSession } from '@/app/ci/boot'
 import { formatLine } from '@/app/ci/frame-presets'
 import { isDraftName, saveStateWords } from '@/app/ci/session'
 import { useEditorStore } from '@/app/editor/active-store'
+// CI: Track E3d-b1 — **Preview with ▾** sits at the right end of the title row.
+import ContentPreviewMenu from '@/components/ci/ContentPreviewMenu.vue'
 import Tip from '@/components/ui/overlay/Tip.vue'
 
 const store = useEditorStore()
@@ -49,5 +51,6 @@ const saveWords = computed(() => saveStateWords(saveState.value))
       :data-kind="saveState.kind"
       >{{ saveWords }}</span
     >
+    <ContentPreviewMenu v-if="session && saveState.kind !== 'loading'" />
   </div>
 </template>

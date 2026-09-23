@@ -84,7 +84,9 @@ describe('style runs', () => {
       { start: 0, length: 5, style: { fontWeight: 700 } },
       { start: 5, length: 15, style: { italic: true } }
     ])
-    expect(remapStyleRuns(runs, 10, 3)).toEqual([{ start: 0, length: 3, style: { fontWeight: 700 } }])
+    expect(remapStyleRuns(runs, 10, 3)).toEqual([
+      { start: 0, length: 3, style: { fontWeight: 700 } }
+    ])
     expect(remapStyleRuns([{ start: 0, length: 10, style: {} }], 10, 4)).toEqual([
       { start: 0, length: 4, style: {} }
     ])
@@ -92,14 +94,25 @@ describe('style runs', () => {
 })
 
 describe('contentPreviewChanges', () => {
-  const text = { text: 'placeholder', styleRuns: [], width: 500, height: 60, fontSize: 24, lineHeight: null }
+  const text = {
+    text: 'placeholder',
+    styleRuns: [],
+    width: 500,
+    height: 60,
+    fontSize: 24,
+    lineHeight: null
+  }
 
   test('a cover title takes the whole value and keeps the box; runs are remapped', () => {
-    expect(contentPreviewChanges(text, 'title', CONTENT, { role: 'cover', maxChars: null })).toEqual({
+    expect(
+      contentPreviewChanges(text, 'title', CONTENT, { role: 'cover', maxChars: null })
+    ).toEqual({
       text: 'عنوان'
     })
     const styled = { ...text, styleRuns: [{ start: 0, length: 11, style: { fontWeight: 700 } }] }
-    expect(contentPreviewChanges(styled, 'title', CONTENT, { role: 'cover', maxChars: null })).toEqual({
+    expect(
+      contentPreviewChanges(styled, 'title', CONTENT, { role: 'cover', maxChars: null })
+    ).toEqual({
       text: 'عنوان',
       styleRuns: [{ start: 0, length: 5, style: { fontWeight: 700 } }]
     })
@@ -111,15 +124,23 @@ describe('contentPreviewChanges', () => {
     expect(changes?.text?.endsWith('…')).toBe(true)
     expect((changes?.text ?? '').length).toBeLessThanOrEqual(18)
     // The cover shows the whole body, however long.
-    expect(contentPreviewChanges(body, 'body', CONTENT, { role: 'cover', maxChars: null })).toEqual({
-      text: CONTENT.body
-    })
-    expect(contentPreviewChanges(body, 'body', CONTENT, { role: 'repeat', maxChars: 10 })?.text.length).toBeLessThanOrEqual(10)
+    expect(contentPreviewChanges(body, 'body', CONTENT, { role: 'cover', maxChars: null })).toEqual(
+      {
+        text: CONTENT.body
+      }
+    )
+    expect(
+      contentPreviewChanges(body, 'body', CONTENT, { role: 'repeat', maxChars: 10 })?.text.length
+    ).toBeLessThanOrEqual(10)
   })
 
   test('an empty value or an image slot yields nothing', () => {
-    expect(contentPreviewChanges(text, 'subtitle', CONTENT, { role: 'cover', maxChars: null })).toBeNull()
-    expect(contentPreviewChanges(text, 'image', CONTENT, { role: 'cover', maxChars: null })).toBeNull()
+    expect(
+      contentPreviewChanges(text, 'subtitle', CONTENT, { role: 'cover', maxChars: null })
+    ).toBeNull()
+    expect(
+      contentPreviewChanges(text, 'image', CONTENT, { role: 'cover', maxChars: null })
+    ).toBeNull()
   })
 })
 

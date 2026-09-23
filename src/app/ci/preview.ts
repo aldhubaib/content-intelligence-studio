@@ -171,7 +171,11 @@ export function relativeTimeWords(iso: string, now: Date = new Date()): string {
   if (hours < 24) return `${hours} h ago`
   const days = Math.round(hours / 24)
   if (days < 7) return `${days} d ago`
-  return new Date(then).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+  return new Date(then).toLocaleDateString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric'
+  })
 }
 
 /** `?preview=<candidate id>` on open preselects that candidate when the list holds it. */

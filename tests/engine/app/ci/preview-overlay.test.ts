@@ -41,8 +41,20 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
 const PNG_2 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 9, 9, 9, 9])
 const JPG = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 5, 6, 7, 8])
 
-function asset(id: string, kind: StudioBrandAsset['kind'], isDefault: boolean, name = id): StudioBrandAsset {
-  return { id, name, url: `https://app.example.com/assets/${id}`, kind, isDefault, contentType: 'image/png' }
+function asset(
+  id: string,
+  kind: StudioBrandAsset['kind'],
+  isDefault: boolean,
+  name = id
+): StudioBrandAsset {
+  return {
+    id,
+    name,
+    url: `https://app.example.com/assets/${id}`,
+    kind,
+    isDefault,
+    contentType: 'image/png'
+  }
 }
 
 interface Fixture {
@@ -72,7 +84,13 @@ function build(options: { withImage?: boolean } = {}): Fixture {
   const store = createEditorStore()
   const graph = new SceneGraph()
   const page = graph.getPages()[0]
-  const cover = graph.createNode('FRAME', page.id, { name: 'cover', x: 0, y: 0, width: 1080, height: 1350 })
+  const cover = graph.createNode('FRAME', page.id, {
+    name: 'cover',
+    x: 0,
+    y: 0,
+    width: 1080,
+    height: 1350
+  })
   const title = graph.createNode('TEXT', cover.id, {
     name: 'content:title',
     text: 'Title placeholder',
@@ -88,9 +106,23 @@ function build(options: { withImage?: boolean } = {}): Fixture {
     height: 600,
     fontSize: 28
   })
-  const image = graph.createNode('RECTANGLE', cover.id, { name: 'content:image', width: 1080, height: 700 })
-  const brand = graph.createNode('RECTANGLE', cover.id, { name: 'brand:user-image', width: 400, height: 400 })
-  const repeat = graph.createNode('FRAME', page.id, { name: 'repeat', x: 1200, y: 0, width: 1080, height: 1350 })
+  const image = graph.createNode('RECTANGLE', cover.id, {
+    name: 'content:image',
+    width: 1080,
+    height: 700
+  })
+  const brand = graph.createNode('RECTANGLE', cover.id, {
+    name: 'brand:user-image',
+    width: 400,
+    height: 400
+  })
+  const repeat = graph.createNode('FRAME', page.id, {
+    name: 'repeat',
+    x: 1200,
+    y: 0,
+    width: 1080,
+    height: 1350
+  })
   const repeatBody = graph.createNode('TEXT', repeat.id, {
     name: 'content:body',
     text: 'Body placeholder',
@@ -178,7 +210,9 @@ describe('content preview', () => {
 
     overlay.setContent({ kind: 'none' })
     expect(node(store, ids.title).text).toBe('Title placeholder')
-    expect(node(store, ids.title).styleRuns).toEqual([{ start: 0, length: 17, style: { fontWeight: 700 } }])
+    expect(node(store, ids.title).styleRuns).toEqual([
+      { start: 0, length: 17, style: { fontWeight: 700 } }
+    ])
     expect(node(store, ids.body).text).toBe('Body placeholder')
     expect(overlay.isPreviewed(ids.title)).toBe(false)
     expect(JSON.stringify(serializeGraph(store.graph, ENGINE))).toBe(before)
@@ -258,7 +292,9 @@ describe('content preview', () => {
     expect(title?.text).toBe('Title placeholder')
     expect(title?.styleRuns).toEqual([{ start: 0, length: 17, style: { fontWeight: 700 } }])
     // The recreated layer carries no edit mark from the correction.
-    expect((title?.source as { editedFields?: string[] } | undefined)?.editedFields ?? []).toEqual([])
+    expect((title?.source as { editedFields?: string[] } | undefined)?.editedFields ?? []).toEqual(
+      []
+    )
     expect(JSON.stringify(afterUndo)).not.toContain(SAMPLE.title)
 
     // ⌘D on the cover frame clones its (unselected, previewed) children.
@@ -266,7 +302,9 @@ describe('content preview', () => {
     store.duplicateSelected()
     const coverCopy = [...store.graph.getAllNodes()].find((n) => n.name === 'cover copy')
     if (!coverCopy) throw new Error('expected a duplicate frame')
-    const copies = [...store.graph.getAllNodes()].filter((n) => n.parentId === coverCopy.id && n.name.startsWith('content:'))
+    const copies = [...store.graph.getAllNodes()].filter(
+      (n) => n.parentId === coverCopy.id && n.name.startsWith('content:')
+    )
     expect(copies.length).toBeGreaterThanOrEqual(2)
     const doc = overlay.serialize(ENGINE)
     for (const copy of copies) {
@@ -283,7 +321,11 @@ describe('content preview', () => {
     await settle()
     expect(loads).toEqual([CANDIDATE.imageUrl])
     const hash = computeImageHash(JPG)
-    expect(node(store, ids.image).fills?.[0]).toMatchObject({ type: 'IMAGE', imageHash: hash, imageScaleMode: 'FILL' })
+    expect(node(store, ids.image).fills?.[0]).toMatchObject({
+      type: 'IMAGE',
+      imageHash: hash,
+      imageScaleMode: 'FILL'
+    })
     expect(store.graph.images.has(hash)).toBe(true)
 
     const doc = overlay.serialize(ENGINE)
@@ -304,7 +346,10 @@ describe('brand preview', () => {
       { asset: hero, bytes: PNG },
       { asset: alt, bytes: PNG_2 }
     ])
-    expect(node(store, ids.brand).fills?.[0]).toMatchObject({ type: 'IMAGE', imageHash: computeImageHash(PNG) })
+    expect(node(store, ids.brand).fills?.[0]).toMatchObject({
+      type: 'IMAGE',
+      imageHash: computeImageHash(PNG)
+    })
     expect(overlay.brandAssetFor(ids.brand)?.id).toBe('hero')
     expect(saved(overlay)).toBe(before)
 
@@ -331,7 +376,9 @@ describe('brand preview', () => {
     const doc = overlay.serialize(ENGINE)
     const plain = doc.graph.nodes.find(([id]) => id === ids.brand)?.[1]
     expect(JSON.stringify(plain?.fills)).toBe(
-      JSON.stringify(JSON.parse(before).graph.nodes.find(([id]: [string]) => id === ids.brand)[1].fills)
+      JSON.stringify(
+        JSON.parse(before).graph.nodes.find(([id]: [string]) => id === ids.brand)[1].fills
+      )
     )
   })
 

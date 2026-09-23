@@ -40,7 +40,10 @@ export interface PreviewCandidates {
   load(force?: boolean): Promise<StudioPreviewCandidate[]>
 }
 
-export function createPreviewCandidates(api: StudioAPI, options: PreviewCandidatesOptions): PreviewCandidates {
+export function createPreviewCandidates(
+  api: StudioAPI,
+  options: PreviewCandidatesOptions
+): PreviewCandidates {
   const state = shallowRef<PreviewCandidatesState>({ kind: 'idle' })
   const now = options.now ?? (() => new Date())
   let inFlight: Promise<StudioPreviewCandidate[]> | null = null

@@ -3,9 +3,12 @@ import { computed, ref } from 'vue'
 
 import { useI18n, useSelectionState, useEditorCommands } from '@open-pencil/vue'
 
+// CI: Track E3d-b1 — the brand **Preview with** section shows for a selected `brand:*` layer in the hosted Studio.
+import { isHosted } from '@/app/ci/hosted'
 import { useEditorStore } from '@/app/editor/active-store'
 import { COMPONENT_TYPES, nodeIcon } from '@/app/editor/icons'
 import { openLibraryReview, useLibraryService } from '@/app/libraries'
+import BrandPreviewSection from '@/components/ci/BrandPreviewSection.vue'
 import Tip from '@/components/ui/overlay/Tip.vue'
 import PanelHeader from '@/components/ui/panel/PanelHeader.vue'
 
@@ -32,6 +35,7 @@ import VariablesSection from './properties/VariablesSection.vue'
 import VariablesDialog from './variables/VariablesDialog.vue'
 
 const variablesOpen = ref(false)
+const hosted = isHosted() // CI
 const store = useEditorStore()
 const libraryService = useLibraryService()
 const activeTool = computed(() => store.state.activeTool)
@@ -168,6 +172,7 @@ const { panels } = useI18n()
       <AppearanceSection />
       <MaskSection />
       <TypographySection v-if="node.type === 'TEXT'" />
+      <BrandPreviewSection v-if="hosted" />
       <FillSection />
       <StrokeSection />
       <LayoutGridSection v-if="supportsLayoutGuides" />

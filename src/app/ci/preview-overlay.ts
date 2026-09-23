@@ -96,7 +96,10 @@ function jsonNormalised(value: unknown): unknown {
 }
 
 /** The image hashes a node's paint lists reference. */
-function imageHashesOf(node: Partial<Pick<SceneNode, 'fills' | 'textDecorationFills'>>, into: Set<string>): void {
+function imageHashesOf(
+  node: Partial<Pick<SceneNode, 'fills' | 'textDecorationFills'>>,
+  into: Set<string>
+): void {
   const lists: Array<readonly Fill[] | undefined> = [node.fills, node.textDecorationFills]
   for (const list of lists) {
     if (!Array.isArray(list)) continue
@@ -119,7 +122,10 @@ function firstImageFill(fills: readonly Fill[] | undefined): Fill | undefined {
   return fills?.find((f) => f.type === 'IMAGE')
 }
 
-export function createPreviewOverlay(store: EditorStore, options: PreviewOverlayOptions): PreviewOverlay {
+export function createPreviewOverlay(
+  store: EditorStore,
+  options: PreviewOverlayOptions
+): PreviewOverlay {
   const content = shallowRef<ContentPreviewSelection>({ kind: 'none' })
   const brandChoices = shallowRef<ReadonlyMap<string, string>>(new Map())
   const brandAssets = shallowRef<readonly StudioBrandAsset[]>([])
@@ -185,14 +191,21 @@ export function createPreviewOverlay(store: EditorStore, options: PreviewOverlay
   }
 
   /** `fills` with every preview image swapped for the document's image, or dropped when the document had none. */
-  function withoutPreviewImages(fills: readonly Fill[], documentFills: readonly Fill[] | undefined): Fill[] {
+  function withoutPreviewImages(
+    fills: readonly Fill[],
+    documentFills: readonly Fill[] | undefined
+  ): Fill[] {
     const documentImage = firstImageFill(documentFills)
     const cleaned: Fill[] = []
     for (const fill of fills) {
       if (!fill.imageHash || !previewHashes.has(fill.imageHash)) {
         cleaned.push(fill)
       } else if (documentImage) {
-        cleaned.push({ ...fill, imageHash: documentImage.imageHash, imageScaleMode: documentImage.imageScaleMode })
+        cleaned.push({
+          ...fill,
+          imageHash: documentImage.imageHash,
+          imageScaleMode: documentImage.imageScaleMode
+        })
       }
     }
     if (cleaned.length === 0 && documentFills) return copyFills([...documentFills])
@@ -271,7 +284,8 @@ export function createPreviewOverlay(store: EditorStore, options: PreviewOverlay
     const restore: Partial<SceneNode> = {}
     if (current) {
       for (const key of Object.keys(current) as OverlayKey[]) {
-        if (!(key in desired)) Reflect.set(restore, key, structuredClone(originals.get(node.id)?.[key]))
+        if (!(key in desired))
+          Reflect.set(restore, key, structuredClone(originals.get(node.id)?.[key]))
       }
     }
     if (current && sameValue(current, desired) && Object.keys(restore).length === 0) return
@@ -318,7 +332,8 @@ export function createPreviewOverlay(store: EditorStore, options: PreviewOverlay
   function correct(node: SceneNode, values: Partial<SceneNode>): void {
     const changed: Partial<SceneNode> = {}
     for (const key of Object.keys(values) as OverlayKey[]) {
-      if (!sameValue(node[key], values[key])) Reflect.set(changed, key, structuredClone(values[key]))
+      if (!sameValue(node[key], values[key]))
+        Reflect.set(changed, key, structuredClone(values[key]))
     }
     if (Object.keys(changed).length > 0) graph().updateNodePreview(node.id, changed)
   }
@@ -384,7 +399,18 @@ export function createPreviewOverlay(store: EditorStore, options: PreviewOverlay
     const keys = Object.keys(changes)
     if (
       keys.some((key) =>
-        ['name', 'pluginData', 'text', 'fills', 'styleRuns', 'width', 'height', 'fontSize', 'lineHeight', 'visible'].includes(key)
+        [
+          'name',
+          'pluginData',
+          'text',
+          'fills',
+          'styleRuns',
+          'width',
+          'height',
+          'fontSize',
+          'lineHeight',
+          'visible'
+        ].includes(key)
       )
     )
       sync()
@@ -403,7 +429,10 @@ export function createPreviewOverlay(store: EditorStore, options: PreviewOverlay
         const twin = [...applied.entries()].find(([twinId, values]) => {
           if (twinId === node.id) return false
           const other = graph().getNode(twinId)
-          return other?.name === name && sameValue(pick(node, Object.keys(values) as OverlayKey[]), values)
+          return (
+            other?.name === name &&
+            sameValue(pick(node, Object.keys(values) as OverlayKey[]), values)
+          )
         })
         if (twin) {
           const twinOriginal = originals.get(twin[0])
@@ -435,7 +464,9 @@ export function createPreviewOverlay(store: EditorStore, options: PreviewOverlay
       }
       imageHashesOf(plain, referenced)
     }
-    doc.graph.images = doc.graph.images.filter(([hash]) => !previewHashes.has(hash) || referenced.has(hash))
+    doc.graph.images = doc.graph.images.filter(
+      ([hash]) => !previewHashes.has(hash) || referenced.has(hash)
+    )
     return doc
   }
 

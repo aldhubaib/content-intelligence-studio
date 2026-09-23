@@ -527,8 +527,12 @@ describe('hosted session', () => {
       const after = structuredClone(serializeGraph(store.graph, '0.15.1'))
       const original = JSON.parse(before)
       // Only the move is a difference.
-      const frameAfter = after.graph.nodes.find(([, n]: [string, SceneNode]) => n.name === 'cover')[1]
-      const frameBefore = original.graph.nodes.find(([, n]: [string, SceneNode]) => n.name === 'cover')[1]
+      const frameAfter = after.graph.nodes.find(
+        ([, n]: [string, SceneNode]) => n.name === 'cover'
+      )[1]
+      const frameBefore = original.graph.nodes.find(
+        ([, n]: [string, SceneNode]) => n.name === 'cover'
+      )[1]
       expect(frameAfter.x).toBe(10)
       expect(frameBefore.x).toBe(0)
     })
@@ -566,7 +570,10 @@ describe('hosted session', () => {
         beforeLoad: (r) => r.answerCandidatesWith({ candidates: [CANDIDATE] })
       })
       await settle()
-      expect(session.preview.overlay.content.value).toEqual({ kind: 'candidate', candidate: CANDIDATE })
+      expect(session.preview.overlay.content.value).toEqual({
+        kind: 'candidate',
+        candidate: CANDIDATE
+      })
       expect(titleOf(store).text).toBe(CANDIDATE.title)
       expect(session.dirty.value).toBe(false)
     })
