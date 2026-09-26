@@ -64,11 +64,51 @@ export class RenderInputError extends Error {
   }
 }
 
+/**
+ * CanvasKit answered `null` to `MakeSurface`: the WASM heap can no longer grow
+ * (INC-13). Nothing in this process will render again — the server answers the
+ * in-flight request 503 and exits so the container restarts with a fresh heap.
+ */
+export class SurfaceExhaustedError extends Error {
+  readonly code = 'surface_exhausted' as const
+  readonly width: number
+  readonly height: number
+  constructor(width: number, height: number) {
+    super(
+      `[studio-render] CanvasKit could not create the export surface (${width}×${height}); the WASM heap is exhausted`
+    )
+    this.name = 'SurfaceExhaustedError'
+    this.width = width
+    this.height = height
+  }
+}
+
+/** Process-lifetime counters the server's health and recycle logic read. */
+export interface EngineStats {
+  /** Successful renders since the process started. */
+  renders: number
+  /** CanvasKit WASM heap size in bytes (`HEAPU8.length`), null while cold. */
+  heapBytes: number | null
+}
+
+let successfulRenders = 0
+
+/** CanvasKit exposes its linear memory as `HEAPU8`; the public typings omit it. */
+function heapBytesOf(ck: CanvasKit): number | null {
+  const heap: unknown = Reflect.get(ck, 'HEAPU8')
+  return heap instanceof Uint8Array ? heap.length : null
+}
+
+export function engineStats(): EngineStats {
+  return { renders: successfulRenders, heapBytes: readyEngine ? heapBytesOf(readyEngine.ck) : null }
+}
+
 // ---------------------------------------------------------------------------
 // CanvasKit — one instance per process, initialised lazily
 // ---------------------------------------------------------------------------
 
 let canvasKit: Promise<{ ck: CanvasKit; renderer: SkiaRenderer }> | null = null
+let readyEngine: { ck: CanvasKit; renderer: SkiaRenderer } | null = null
 let engineReady = false
 
 /** `canvaskit-wasm/full`'s glue + `.wasm` directory, decoded so a path with spaces still resolves. */
@@ -101,7 +141,8 @@ async function headlessRenderer(): Promise<{ ck: CanvasKit; renderer: SkiaRender
       fontManager.setArabicFallbackFamily('Noto Naskh Arabic')
     }
     engineReady = true
-    return { ck, renderer }
+    readyEngine = { ck, renderer }
+    return readyEngine
   })()
   canvasKit.catch(() => {
     // A failed boot is not sticky: the next render retries the initialisation.
@@ -171,7 +212,15 @@ function rootFrames(graph: SceneGraph): SceneNode[] {
   return frames
 }
 
-/** Direct raster: one CPU surface at the target size, Skia AA only, PNG via CanvasKit's encoder. */
+/**
+ * Direct raster: one CPU surface at the target size, Skia AA only, PNG via CanvasKit's encoder.
+ *
+ * INC-13: `ck.MakeSurface(w, h)` mallocs the `w × h × 4` pixel buffer on the
+ * WASM heap and hands the surface a pointer to it; `surface.delete()` frees the
+ * Skia object but NOT that buffer — only `surface.dispose()` does (CanvasKit
+ * `interface.js`). A 1080 × 1350 design at 2× leaked 23.3 MB per render, so the
+ * 2 GB heap was gone after ~75 designs and every later `MakeSurface` was null.
+ */
 function renderFrameDirect(
   ck: CanvasKit,
   renderer: SkiaRenderer,
@@ -185,7 +234,7 @@ function renderFrameDirect(
   const width = Math.ceil((bounds.maxX - bounds.minX) * scale)
   const height = Math.ceil((bounds.maxY - bounds.minY) * scale)
   const surface = ck.MakeSurface(width, height)
-  if (!surface) throw new Error('[studio-render] CanvasKit could not create the export surface')
+  if (!surface) throw new SurfaceExhaustedError(width, height)
   const t0 = performance.now()
   try {
     const canvas = surface.getCanvas()
@@ -202,7 +251,7 @@ function renderFrameDirect(
     if (!encoded) throw new Error('[studio-render] PNG encode failed')
     return { png: new Uint8Array(encoded), rasterMs: t1 - t0, encodeMs: t2 - t1 }
   } finally {
-    surface.delete()
+    surface.dispose()
   }
 }
 
@@ -235,6 +284,43 @@ async function awaitTextReadiness(
   }
 }
 
+/**
+ * Frees what one render left in the shared renderer (INC-13).
+ *
+ * `SkiaRenderer` is built for an editor that shows ONE document for a long
+ * time, so its caches are keyed by image hash / node id and are only emptied
+ * by `destroy()`. The sidecar shows a different document on every request:
+ * each design's decoded, mip-mapped `content:image` / `brand:user-image`
+ * stayed in `imageCache` forever (≈ 6–8 MB of WASM heap per 1080-px image),
+ * and every node id that is new to the process left its geometry paths
+ * behind. After ~70 designs the heap could not grow for the next 2× export
+ * surface and `MakeSurface` answered null for the rest of the process's life.
+ *
+ * Pictures / paragraphs are already dropped by `invalidateAllPictures()` at
+ * the start of the next render; this drops the rest, in the same order
+ * `destroyRenderer` (core `canvas/renderer/lifecycle.ts`) does, without
+ * touching the fonts — the font provider and typefaces are per process.
+ */
+export function releaseSceneResources(renderer: SkiaRenderer): void {
+  for (const image of renderer.imageCache.values()) image.delete()
+  renderer.imageCache.clear()
+  for (const cache of [
+    renderer.vectorPathCache,
+    renderer.vectorStrokePathCache,
+    renderer.vectorStrokeOutlineCache,
+    renderer.fillGeometryCache,
+    renderer.strokeGeometryCache
+  ]) {
+    for (const paths of cache.values()) for (const path of paths) path.delete()
+    cache.clear()
+  }
+  renderer.glyphSilhouetteCache.clear()
+  renderer.invalidateAllPictures()
+  renderer.labelCache.invalidate()
+  renderer.pendingFontNodes.clear()
+  renderer.textPictureGenerations.clear()
+}
+
 let renderQueue: Promise<unknown> = Promise.resolve()
 
 /** Serialise renders in this process (the renderer's picture cache and text measurer are shared). */
@@ -245,7 +331,15 @@ function enqueue<T>(work: () => Promise<T>): Promise<T> {
 }
 
 export function renderDocument(input: RenderInput): Promise<RenderReport> {
-  return enqueue(() => renderNow(input))
+  return enqueue(async () => {
+    const { renderer } = await headlessRenderer()
+    try {
+      return await renderNow(input)
+    } finally {
+      // Every render leaves the renderer as it found it (INC-13).
+      releaseSceneResources(renderer)
+    }
+  })
 }
 
 async function renderNow(input: RenderInput): Promise<RenderReport> {
@@ -305,6 +399,7 @@ async function renderNow(input: RenderInput): Promise<RenderReport> {
   }
   const t4 = performance.now()
   if (!png) throw new Error('[studio-render] nothing rendered')
+  successfulRenders += 1
 
   return {
     png,

@@ -22,8 +22,14 @@
 >   app's `studio` renderer calls it with
 >   `Authorization: Bearer <STUDIO_INTERNAL_SECRET>`; nginx proxies
 >   `/internal/` and refuses requests without a bearer;
->   `GET /internal/healthz` is open. Fonts travel as sha256 refs and are
->   cached in memory (`428 fonts_missing` → resend with bytes). Locally:
+>   `GET /internal/healthz` is open; `GET /internal/health` (bearer) reports
+>   `{ ok, engineVersion, renders, rssMb, heapMb, uptimeSec }`. Fonts travel
+>   as sha256 refs and are cached in memory (`428 fonts_missing` → resend
+>   with bytes). The sidecar is a long-lived process over a WASM heap that
+>   only grows: it frees every per-render allocation, recycles itself after
+>   `STUDIO_RENDER_MAX_RENDERS` renders (default 40, exit 0) and, should
+>   CanvasKit ever refuse a surface, answers `503 render_unavailable` and
+>   exits 70 so the container restarts (INC-13, `PATCHES.md` S-10). Locally:
 >   `STUDIO_INTERNAL_SECRET=<≥16 chars> bun run render:dev`, tests
 >   `bun run render:test`, types + lint `bun run render:check`. Contract in
 >   `studio-render/protocol.ts`.
@@ -43,8 +49,8 @@
 >   sidecar is not configured). Everything a person draws happens here.
 > - **Environment.** `PORT` (nginx), `STUDIO_APP_ORIGIN`,
 >   `STUDIO_INTERNAL_SECRET`, `STUDIO_RENDER_PORT` / `_HOST`,
->   `STUDIO_RENDER_MAX_BODY_MB` / `_FONT_CACHE_MB` / `_WARM` — meanings in
->   `PATCHES.md` § Environment.
+>   `STUDIO_RENDER_MAX_BODY_MB` / `_FONT_CACHE_MB` / `_WARM` /
+>   `_MAX_RENDERS` — meanings in `PATCHES.md` § Environment.
 > - **Rebase on the next upstream release.** `git fetch upstream && git
 >   rebase v<next>` on `studio-main`, resolve only the files in
 >   `PATCHES.md`, rebuild with the flag, run `bun run check`, bump the

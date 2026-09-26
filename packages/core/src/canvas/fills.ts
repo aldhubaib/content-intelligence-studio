@@ -355,6 +355,7 @@ export function applyGradientFill(
       r.ck.TileMode.Clamp
     )
     r.fillPaint.setShader(shader)
+    shader.delete() // CI: see applyImageFill — the paint holds its own reference (INC-13).
   } else if (fill.type === 'GRADIENT_DIAMOND') {
     const shader = makeDiamondGradient(r, colors, positions, makeGradientLocalMatrix(r, w, h, t))
     try {
@@ -376,6 +377,7 @@ export function applyGradientFill(
       localMatrix
     )
     r.fillPaint.setShader(shader)
+    shader.delete() // CI: INC-13
   } else if (fill.type === 'GRADIENT_ANGULAR') {
     const localMatrix = makeGradientLocalMatrix(r, w, h, t)
     const shader = r.ck.Shader.MakeSweepGradient(
@@ -387,6 +389,7 @@ export function applyGradientFill(
       localMatrix
     )
     r.fillPaint.setShader(shader)
+    shader.delete() // CI: INC-13
   }
 }
 
@@ -458,6 +461,9 @@ export function applyImageFill(
 
   const localMatrix = makeImageFillLocalMatrix(r, fill, node, imgW, imgH)
 
+  // CI: the paint takes its own reference in `setShader`; the wrapper's reference
+  // must be released or the shader — and the decoded image it pins — outlives
+  // the image cache (INC-13: ≈ 3 MB of WASM heap per image fill, forever).
   if (scaleMode === 'TILE') {
     const shader = img.makeShaderCubic(
       r.ck.TileMode.Repeat,
@@ -467,6 +473,7 @@ export function applyImageFill(
       localMatrix
     )
     r.fillPaint.setShader(shader)
+    shader.delete()
     return true
   }
 
@@ -479,6 +486,7 @@ export function applyImageFill(
     localMatrix
   )
   r.fillPaint.setShader(shader)
+  shader.delete()
   return true
 }
 

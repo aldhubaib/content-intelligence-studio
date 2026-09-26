@@ -14,13 +14,26 @@
 //   STUDIO_RENDER_MAX_BODY_MB    request body cap (default 32).
 //   STUDIO_RENDER_FONT_CACHE_MB  in-memory font cache cap (default 64).
 //   STUDIO_RENDER_WARM           `1` (default) warms CanvasKit at boot.
+//   STUDIO_RENDER_MAX_RENDERS    successful renders before the process recycles itself
+//                                (default 40, `0` = never; INC-13). The entrypoint exits with
+//                                the sidecar and Railway restarts the container with a fresh
+//                                CanvasKit heap.
 
-import { ENGINE_VERSION, RenderInputError, engineState, renderDocument, warmEngine } from './engine'
+import {
+  ENGINE_VERSION,
+  RenderInputError,
+  engineState,
+  engineStats,
+  renderDocument,
+  warmEngine
+} from './engine'
 import { FontCache } from './font-cache'
+import { DEFAULT_MAX_RENDERS, SidecarLifecycle, isHeapExhaustion } from './lifecycle'
 import {
   type RenderErrorBody,
   type RenderErrorCode,
   type RenderRequest,
+  type SidecarHealthBody,
   fontReadinessProblem,
   parseRenderRequest
 } from './protocol'
@@ -33,25 +46,33 @@ export interface SidecarOptions {
   fontCache: FontCache
   render?: typeof renderDocument
   log?: SidecarLog
+  /** Recycle / self-heal (INC-13); absent in unit tests that only exercise the protocol. */
+  lifecycle?: SidecarLifecycle
+  /** Injected for tests; defaults to the engine's own counters. */
+  stats?: typeof engineStats
 }
 
 export interface SidecarBootOptions extends SidecarOptions {
   port: number
   host: string
   warm: boolean
+  maxRenders: number
 }
 
 const SECRET_MIN_LENGTH = 16
 const MB = 1024 * 1024
+const STARTED_AT = Date.now()
 
 export function readOptions(
   env: Record<string, string | undefined> = process.env
 ): SidecarBootOptions {
   const secret = env.STUDIO_INTERNAL_SECRET?.trim() || null
-  const number = (name: string, fallback: number) => {
+  const number = (name: string, fallback: number, { allowZero = false } = {}) => {
     const raw = env[name]?.trim()
     const n = raw ? Number(raw) : Number.NaN
-    return Number.isFinite(n) && n > 0 ? n : fallback
+    if (!Number.isFinite(n)) return fallback
+    if (n > 0) return n
+    return allowZero && n === 0 ? 0 : fallback
   }
   return {
     secret: secret && secret.length >= SECRET_MIN_LENGTH ? secret : null,
@@ -59,7 +80,8 @@ export function readOptions(
     fontCache: new FontCache(Math.floor(number('STUDIO_RENDER_FONT_CACHE_MB', 64) * MB)),
     port: Math.floor(number('STUDIO_RENDER_PORT', 8788)),
     host: env.STUDIO_RENDER_HOST?.trim() || '127.0.0.1',
-    warm: (env.STUDIO_RENDER_WARM ?? '1') !== '0'
+    warm: (env.STUDIO_RENDER_WARM ?? '1') !== '0',
+    maxRenders: Math.floor(number('STUDIO_RENDER_MAX_RENDERS', DEFAULT_MAX_RENDERS, { allowZero: true }))
   }
 }
 
@@ -106,6 +128,28 @@ function healthResponse(options: SidecarOptions): Response {
     configured: Boolean(options.secret),
     fontsCached: options.fontCache.size
   })
+}
+
+/** `GET /internal/health` — bearer-gated process facts for the app's health page (INC-13). */
+function processHealthResponse(options: SidecarOptions): Response {
+  const stats = (options.stats ?? engineStats)()
+  const body: SidecarHealthBody = {
+    ok: !options.lifecycle?.draining,
+    engineVersion: ENGINE_VERSION,
+    renders: stats.renders,
+    rssMb: Math.round(process.memoryUsage().rss / MB),
+    heapMb: stats.heapBytes === null ? null : Math.round(stats.heapBytes / MB),
+    uptimeSec: Math.round((Date.now() - STARTED_AT) / 1000)
+  }
+  return json(200, body)
+}
+
+function drainingResponse(lifecycle: SidecarLifecycle): Response {
+  const why =
+    lifecycle.reason === 'surface-exhausted'
+      ? 'the renderer is restarting after exhausting its memory'
+      : 'the renderer is recycling'
+  return fail(503, 'render_unavailable', `Render unavailable: ${why}; retry shortly.`)
 }
 
 type BodyResult = { ok: true; request: RenderRequest } | { ok: false; response: Response }
@@ -175,13 +219,16 @@ async function renderResponse(
       options.log?.({ event: 'render.refused', code: 'fonts_not_ready', ms: elapsed() })
       return fail(422, 'fonts_not_ready', problem, { report: summary })
     }
+    const renders = (options.stats ?? engineStats)().renders
     options.log?.({
       event: 'render.ok',
       width: report.width,
       height: report.height,
       bytes: report.png.byteLength,
-      ms: elapsed()
+      ms: elapsed(),
+      renders
     })
+    options.lifecycle?.renderSucceeded(renders)
     return new Response(report.png.slice() as Uint8Array<ArrayBuffer>, {
       status: 200,
       headers: {
@@ -201,6 +248,14 @@ async function renderResponse(
       return fail(422, error.code, error.message)
     }
     const message = error instanceof Error ? error.message : String(error)
+    if (isHeapExhaustion(error)) {
+      // INC-13: nothing in this process renders again — answer 503 so the app
+      // defers without an attempt, then exit so the container restarts.
+      options.log?.({ event: 'render.failed', code: 'surface_exhausted', message, ms: elapsed() })
+      const renders = (options.stats ?? engineStats)().renders
+      options.lifecycle?.exhausted(renders, message)
+      return fail(503, 'render_unavailable', `Render unavailable: ${message}; retry shortly.`)
+    }
     options.log?.({ event: 'render.failed', message, ms: elapsed() })
     return fail(500, 'render_failed', message)
   }
@@ -216,14 +271,20 @@ export async function handleRequest(request: Request, options: SidecarOptions): 
     return healthResponse(options)
   }
 
-  if (route !== '/render') return fail(404, 'bad_request', 'Not found.')
-  if (request.method !== 'POST') return fail(405, 'bad_request', 'Method not allowed.')
+  if (route !== '/render' && route !== '/health') return fail(404, 'bad_request', 'Not found.')
+  const expectedMethod = route === '/health' ? 'GET' : 'POST'
+  if (request.method !== expectedMethod && !(route === '/health' && request.method === 'HEAD')) {
+    return fail(405, 'bad_request', 'Method not allowed.')
+  }
   if (!options.secret) {
     return fail(503, 'not_configured', 'STUDIO_INTERNAL_SECRET is not set on the Studio service.')
   }
   if (!bearerMatches(request.headers.get('authorization'), options.secret)) {
     return fail(401, 'unauthorized', 'Missing or invalid bearer.')
   }
+
+  if (route === '/health') return processHealthResponse(options)
+  if (options.lifecycle?.draining) return drainingResponse(options.lifecycle)
 
   const body = await readRenderBody(request, options)
   if (!body.ok) return body.response
@@ -244,12 +305,21 @@ export function startSidecar(env: Record<string, string | undefined> = process.e
     // oxlint-disable-next-line no-console -- the sidecar's structured log line
     console.log(JSON.stringify({ ts: new Date().toISOString(), service: 'studio-render', ...line }))
   }
+  // INC-13: bounded lifetime + self-heal. `server.stop()` (no force) stops the
+  // listener and resolves once in-flight responses — the 503 included — have
+  // been flushed; the entrypoint sees the exit and Railway restarts the container.
+  const lifecycle: SidecarLifecycle = new SidecarLifecycle({
+    maxRenders: options.maxRenders,
+    stop: (): Promise<void> => server.stop(),
+    exit: (code) => process.exit(code),
+    log
+  })
   const server = Bun.serve({
     port: options.port,
     hostname: options.host,
     maxRequestBodySize: options.maxBodyBytes,
     idleTimeout: 120,
-    fetch: (request) => handleRequest(request, { ...options, log })
+    fetch: (request): Promise<Response> => handleRequest(request, { ...options, log, lifecycle })
   })
   log({
     event: 'listening',
@@ -257,7 +327,8 @@ export function startSidecar(env: Record<string, string | undefined> = process.e
     port: server.port,
     engine: ENGINE_VERSION,
     configured: Boolean(options.secret),
-    maxBodyMb: options.maxBodyBytes / MB
+    maxBodyMb: options.maxBodyBytes / MB,
+    maxRenders: options.maxRenders
   })
   if (!options.secret) {
     log({

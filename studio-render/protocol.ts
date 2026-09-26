@@ -9,8 +9,13 @@
 //     422 unsupported_document | frame_not_found | no_frame | fonts_not_ready
 //     428 fonts_missing        { missing: [sha256…] } — resend with `data` for those hashes
 //     503 not_configured       the sidecar has no secret
+//     503 render_unavailable   the process is draining (recycle after STUDIO_RENDER_MAX_RENDERS
+//                              renders, or the CanvasKit heap is exhausted and the process is
+//                              about to exit); the caller retries later — INC-13
 //     500 render_failed        the engine threw
-//   GET  /internal/healthz     { ok, engine, canvasKit, configured, fontsCached }
+//   GET  /internal/healthz     { ok, engine, canvasKit, configured, fontsCached }   (no bearer)
+//   GET  /internal/health      Authorization: Bearer <STUDIO_INTERNAL_SECRET>
+//                              { ok, engineVersion, renders, rssMb, heapMb, uptimeSec }
 //
 // Fonts are content-addressed: a `FontRef` names a face by sha256 of its
 // bytes; the sidecar keeps the bytes in memory by that hash and answers 428
@@ -57,6 +62,7 @@ export type RenderErrorCode =
   | 'fonts_not_ready'
   | 'fonts_missing'
   | 'not_configured'
+  | 'render_unavailable'
   | 'render_failed'
 
 export interface RenderErrorBody {
@@ -64,6 +70,19 @@ export interface RenderErrorBody {
   message: string
   missing?: string[]
   report?: unknown
+}
+
+// CI: INC-13 — the bearer-gated `GET /internal/health` body: process facts the app's operator reads.
+export interface SidecarHealthBody {
+  /** False while the process is draining (recycle or exhaustion) — a new render would get 503. */
+  ok: boolean
+  engineVersion: string
+  /** Successful renders since the process started. */
+  renders: number
+  rssMb: number
+  /** CanvasKit WASM heap size (grows only; a healthy process plateaus), or null before the first render. */
+  heapMb: number | null
+  uptimeSec: number
 }
 
 export const MAX_SCALE = 8

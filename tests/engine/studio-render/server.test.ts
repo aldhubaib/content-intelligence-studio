@@ -2,6 +2,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { FontCache, sha256Hex } from '#studio-render/font-cache'
+import { EXIT_CODE_EXHAUSTED, SidecarLifecycle, isHeapExhaustion } from '#studio-render/lifecycle'
+import type { SidecarHealthBody } from '#studio-render/protocol'
 import { type SidecarOptions, handleRequest, readOptions } from '#studio-render/server'
 
 const SECRET = 'test-secret-0123456789abcdef'
@@ -76,6 +78,105 @@ describe('readOptions', () => {
     expect(opts.warm).toBe(false)
     expect(opts.host).toBe('0.0.0.0')
   })
+
+  test('STUDIO_RENDER_MAX_RENDERS defaults to 40, accepts 0 as never, ignores junk', () => {
+    expect(readOptions({}).maxRenders).toBe(40)
+    expect(readOptions({ STUDIO_RENDER_MAX_RENDERS: '0' }).maxRenders).toBe(0)
+    expect(readOptions({ STUDIO_RENDER_MAX_RENDERS: '12' }).maxRenders).toBe(12)
+    expect(readOptions({ STUDIO_RENDER_MAX_RENDERS: '-3' }).maxRenders).toBe(40)
+    expect(readOptions({ STUDIO_RENDER_MAX_RENDERS: 'many' }).maxRenders).toBe(40)
+  })
+})
+
+interface FakeLifecycleDeps {
+  maxRenders?: number
+  stopResolves?: boolean
+}
+
+/** A lifecycle whose `stop` / `exit` / timers are recorded instead of touching the process. */
+function fakeLifecycle({ maxRenders = 3, stopResolves = true }: FakeLifecycleDeps = {}) {
+  const calls: { stop: number; exit: number[]; timers: Array<() => void>; logs: Record<string, unknown>[] } = {
+    stop: 0,
+    exit: [],
+    timers: [],
+    logs: []
+  }
+  const lifecycle = new SidecarLifecycle({
+    maxRenders,
+    stop: () => {
+      calls.stop += 1
+      if (stopResolves) return Promise.resolve()
+      // A stop that never settles: the hard deadline must exit anyway.
+      return new Promise<void>(() => {
+        /* never resolves */
+      })
+    },
+    exit: (code) => calls.exit.push(code),
+    log: (line) => calls.logs.push(line),
+    setTimeout: (fn) => calls.timers.push(fn),
+    rssMb: () => 123
+  })
+  return { lifecycle, calls }
+}
+
+const settle = () =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, 0)
+  })
+
+describe('SidecarLifecycle', () => {
+  test('recycles once the successful render count reaches the cap — stop, then exit 0', async () => {
+    const { lifecycle, calls } = fakeLifecycle({ maxRenders: 3 })
+    lifecycle.renderSucceeded(1)
+    lifecycle.renderSucceeded(2)
+    expect(lifecycle.draining).toBe(false)
+    lifecycle.renderSucceeded(3)
+    expect(lifecycle.state).toBe('draining')
+    expect(lifecycle.reason).toBe('recycle')
+    expect(calls.stop).toBe(1)
+    await settle()
+    expect(calls.exit).toEqual([0])
+    expect(calls.logs).toEqual([{ event: 'recycle', renders: 3, maxRenders: 3, rssMb: 123 }])
+    // A second signal never drains twice.
+    lifecycle.renderSucceeded(4)
+    lifecycle.exhausted(4, 'late')
+    await settle()
+    expect(calls.stop).toBe(1)
+    expect(calls.exit).toEqual([0])
+  })
+
+  test('maxRenders 0 never recycles', () => {
+    const { lifecycle, calls } = fakeLifecycle({ maxRenders: 0 })
+    lifecycle.renderSucceeded(10_000)
+    expect(lifecycle.draining).toBe(false)
+    expect(calls.stop).toBe(0)
+  })
+
+  test('exhaustion exits 70 after stop, and the grace timer forces the exit when stop hangs', async () => {
+    const { lifecycle, calls } = fakeLifecycle({ stopResolves: false })
+    lifecycle.exhausted(41, 'CanvasKit could not create the export surface')
+    expect(lifecycle.reason).toBe('surface-exhausted')
+    expect(calls.logs[0]).toEqual({
+      event: 'surface-exhausted',
+      renders: 41,
+      rssMb: 123,
+      message: 'CanvasKit could not create the export surface'
+    })
+    await settle()
+    expect(calls.exit).toEqual([])
+    expect(calls.timers).toHaveLength(1)
+    calls.timers[0]?.()
+    expect(calls.exit).toEqual([EXIT_CODE_EXHAUSTED])
+    calls.timers[0]?.()
+    expect(calls.exit).toEqual([EXIT_CODE_EXHAUSTED])
+  })
+
+  test('isHeapExhaustion recognises the engine error and a WASM abort, nothing else', () => {
+    expect(isHeapExhaustion({ code: 'surface_exhausted' })).toBe(true)
+    expect(isHeapExhaustion(new WebAssembly.RuntimeError('Aborted()'))).toBe(true)
+    expect(isHeapExhaustion(new Error('boom'))).toBe(false)
+    expect(isHeapExhaustion(null)).toBe(false)
+  })
 })
 
 describe('handleRequest', () => {
@@ -149,7 +250,7 @@ describe('handleRequest', () => {
     const report = JSON.parse(second.headers.get('x-render-report') ?? '{}') as NonNullable<
       JSONBody['report']
     >
-    expect(report.textReadiness).toEqual({ 'slot:headline': 'ready' })
+    expect(report.textReadiness).toEqual({ 'content:title': 'ready' })
     const png = new Uint8Array(await second.arrayBuffer())
     expect(Array.from(png.slice(0, 4))).toEqual(PNG_MAGIC)
     expect(opts.fontCache.size).toBe(1)
@@ -229,5 +330,124 @@ describe('handleRequest', () => {
     )
     expect(res.status).toBe(500)
     expect(await bodyOf(res)).toEqual({ error: 'render_failed', message: 'boom' })
+  })
+})
+
+const fakeReport = (): Awaited<ReturnType<NonNullable<SidecarOptions['render']>>> => ({
+  png: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0]),
+  width: 1,
+  height: 1,
+  frameId: 'f',
+  mode: 'direct',
+  engineVersion: '0.15.1',
+  fontIssues: [],
+  textReadiness: {},
+  timings: { canvasKitMs: 0, parseMs: 0, fontsMs: 0, renderMs: 0 }
+})
+
+describe('handleRequest — lifetime (INC-13)', () => {
+  test('GET /internal/health is bearer-gated and reports process facts', async () => {
+    let renders = 7
+    const stats: SidecarOptions['stats'] = () => ({ renders, heapBytes: 128 * 1024 * 1024 })
+    const opts = options({ stats })
+    const none = await handleRequest(new Request('http://sidecar/internal/health'), opts)
+    expect(none.status).toBe(401)
+    const wrong = await handleRequest(
+      new Request('http://sidecar/internal/health', { headers: { authorization: 'Bearer nope' } }),
+      opts
+    )
+    expect(wrong.status).toBe(401)
+    const posted = await handleRequest(
+      new Request('http://sidecar/internal/health', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${SECRET}` }
+      }),
+      opts
+    )
+    expect(posted.status).toBe(405)
+    const res = await handleRequest(
+      new Request('http://sidecar/internal/health', { headers: { authorization: `Bearer ${SECRET}` } }),
+      opts
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as SidecarHealthBody
+    expect(body.ok).toBe(true)
+    expect(body.engineVersion).toBe('0.15.1')
+    expect(body.renders).toBe(7)
+    expect(body.heapMb).toBe(128)
+    expect(typeof body.rssMb).toBe('number')
+    expect(typeof body.uptimeSec).toBe('number')
+    renders = 8
+    const unconfigured = await handleRequest(
+      new Request('http://sidecar/internal/health', { headers: { authorization: `Bearer ${SECRET}` } }),
+      options({ stats, secret: null })
+    )
+    expect(unconfigured.status).toBe(503)
+  })
+
+  test('the Nth successful render recycles: stop is called and later renders answer 503', async () => {
+    let renders = 0
+    const render: SidecarOptions['render'] = async () => {
+      renders += 1
+      return fakeReport()
+    }
+    const stats: SidecarOptions['stats'] = () => ({ renders, heapBytes: null })
+    const { lifecycle, calls } = fakeLifecycle({ maxRenders: 2 })
+    const opts = options({ render, stats, lifecycle })
+    const body = { document: {}, format: 'png', scale: 1 }
+    expect((await handleRequest(post(body), opts)).status).toBe(200)
+    expect(lifecycle.draining).toBe(false)
+    const second = await handleRequest(post(body), opts)
+    expect(second.status).toBe(200) // the Nth render is still answered with its PNG
+    expect(lifecycle.draining).toBe(true)
+    expect(calls.stop).toBe(1)
+    await settle()
+    expect(calls.exit).toEqual([0])
+    const third = await handleRequest(post(body), opts)
+    expect(third.status).toBe(503)
+    expect(await bodyOf(third)).toEqual({
+      error: 'render_unavailable',
+      message: 'Render unavailable: the renderer is recycling; retry shortly.'
+    })
+    expect(renders).toBe(2)
+    const health = await handleRequest(
+      new Request('http://sidecar/internal/health', { headers: { authorization: `Bearer ${SECRET}` } }),
+      opts
+    )
+    expect(((await health.json()) as { ok: boolean }).ok).toBe(false)
+  })
+
+  test('heap exhaustion answers 503 render_unavailable and exits 70 — never 500', async () => {
+    const render: SidecarOptions['render'] = async () => {
+      throw Object.assign(new Error('[studio-render] CanvasKit could not create the export surface'), {
+        code: 'surface_exhausted'
+      })
+    }
+    const stats: SidecarOptions['stats'] = () => ({ renders: 41, heapBytes: 2 * 1024 * 1024 * 1024 })
+    const { lifecycle, calls } = fakeLifecycle({ maxRenders: 0 })
+    const opts = options({ render, stats, lifecycle })
+    const res = await handleRequest(post({ document: {}, format: 'png', scale: 1 }), opts)
+    expect(res.status).toBe(503)
+    const body = await bodyOf(res)
+    expect(body.error).toBe('render_unavailable')
+    expect(body.message).toContain('could not create the export surface')
+    expect(lifecycle.reason).toBe('surface-exhausted')
+    await settle()
+    expect(calls.exit).toEqual([EXIT_CODE_EXHAUSTED])
+    expect(calls.logs.map((l) => l.event)).toEqual(['surface-exhausted'])
+  })
+
+  test('a WASM abort is exhaustion too', async () => {
+    const render: SidecarOptions['render'] = async () => {
+      throw new WebAssembly.RuntimeError('Aborted(). Build with -sASSERTIONS for more info.')
+    }
+    const { lifecycle, calls } = fakeLifecycle({ maxRenders: 0 })
+    const res = await handleRequest(
+      post({ document: {}, format: 'png', scale: 1 }),
+      options({ render, lifecycle })
+    )
+    expect(res.status).toBe(503)
+    await settle()
+    expect(calls.exit).toEqual([EXIT_CODE_EXHAUSTED])
   })
 })
