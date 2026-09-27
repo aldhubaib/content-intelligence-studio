@@ -10,6 +10,7 @@ import {
   bindingOf,
   bindingsReport,
   bindingsStatusWords,
+  contractRoles,
   DEFAULT_VOCABULARY,
   listBindings,
   migrateLegacyBindings,
@@ -263,5 +264,25 @@ describe('addRoleFrame', () => {
 
     expect(addRoleFrame(store, 'repeat', FORMAT)).toBeNull()
     expect(roleFrames(store.graph, page).map((r) => r.role)).toEqual(['cover', 'repeat'])
+  })
+})
+
+// Track FB-61 (PATCHES H-66): the roles a format's template must contain — never a choice.
+describe('contractRoles', () => {
+  test('a carousel format lists all three roles, a single-image format the cover only', () => {
+    expect(contractRoles(CAROUSEL)).toEqual(['cover', 'repeat', 'ending'])
+    expect(contractRoles(FORMAT)).toEqual(['cover'])
+    expect(contractRoles(null)).toEqual(['cover', 'repeat', 'ending'])
+  })
+
+  test("the app's contract wins over slideCap, unknown words are dropped, an empty one falls back", () => {
+    expect(contractRoles(CAROUSEL, { roles: ['cover'] })).toEqual(['cover'])
+    expect(contractRoles(FORMAT, { roles: ['ending', 'cover', 'repeat', 'hero'] })).toEqual([
+      'cover',
+      'repeat',
+      'ending'
+    ])
+    expect(contractRoles(FORMAT, { roles: [] })).toEqual(['cover'])
+    expect(contractRoles(FORMAT, { roles: ['hero'] })).toEqual(['cover'])
   })
 })

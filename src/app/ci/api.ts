@@ -110,6 +110,39 @@ export interface StudioTemplatePayload {
    * Absent on an older app → the menu says "Preview unavailable".
    */
   preview?: StudioPreviewPayload | null
+  /**
+   * Track FB-61: the template contract of this format — which role frames it
+   * must contain, the platform's slide cap and the checklist words the app
+   * computed over the CURRENT version. Absent on an older app → the Studio
+   * derives the roles from `format.slideCap` and computes its own rows.
+   */
+  contract?: StudioContractPayload | null
+}
+
+/** One row of the format-aware Bindings checklist (app `src/lib/bindings-words.ts` `contractRows`). */
+export interface StudioContractRow {
+  role: StudioRoleName
+  /** "Cover (required) — needs content:title or content:body" */
+  label: string
+  /** "required" · "optional" · null (repeat: neither word) */
+  requirement: 'required' | 'optional' | null
+  /** "needs content:title or content:body" / "takes content:cta" */
+  needs: string
+  present: boolean
+  met: boolean
+  /** "met" / "not met — …" */
+  words: string
+}
+
+export interface StudioContractPayload {
+  roles: StudioRoleName[]
+  slideCap: number
+  carousel: boolean
+  /** "This format is a single image. Design the Cover." / "Cover is the first slide. …" */
+  helper: string
+  rows: StudioContractRow[]
+  /** Role frames on the page the format never renders — "Not used by this format". */
+  unusedRoles: StudioRoleName[]
 }
 
 export interface StudioPreviewPayload {

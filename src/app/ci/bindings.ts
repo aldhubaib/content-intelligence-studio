@@ -99,6 +99,24 @@ export function parseBindingName(
   return null
 }
 
+/**
+ * Track FB-61: the roles a format's template MUST contain — the app's
+ * `templateContract` twin. The payload's `contract.roles` wins when the app
+ * sends it; an older app is read from `slideCap` (carousel → all three,
+ * single image → cover only). Never a choice.
+ */
+export function contractRoles(
+  format: Pick<StudioFormat, 'slideCap'> | null,
+  contract?: { roles: readonly string[] } | null
+): readonly StudioRoleName[] {
+  if (contract && contract.roles.length > 0) {
+    const roles = ROLE_FRAMES.filter((role) => contract.roles.includes(role))
+    if (roles.length > 0) return roles
+  }
+  if (format === null) return ROLE_FRAMES
+  return format.slideCap > 1 ? ROLE_FRAMES : ['cover']
+}
+
 export function roleOfFrameName(name: unknown): StudioRoleName | null {
   if (typeof name !== 'string') return null
   const lower = name.trim().toLowerCase()

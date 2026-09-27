@@ -1,4 +1,4 @@
-<!-- CI: **Add role frame ▾** — cover · repeat · ending (Track E3d-a, FB-44 §2). -->
+<!-- CI: **Add role frame ▾** — the roles of the format's contract (Track E3d-a, FB-44 §2; Track FB-61, PATCHES H-66). -->
 <script setup lang="ts">
 import {
   DropdownMenuContent,
@@ -12,7 +12,7 @@ import { computed } from 'vue'
 import { useRetainedPopup } from '@open-pencil/vue'
 
 import type { StudioRoleName } from '@/app/ci/api'
-import { addRoleFrame, ROLE_FRAMES, ROLE_LABELS, roleFrames } from '@/app/ci/bindings'
+import { addRoleFrame, contractRoles, ROLE_LABELS, roleFrames } from '@/app/ci/bindings'
 import { hostedSession } from '@/app/ci/boot'
 import { useEditorStore } from '@/app/editor/active-store'
 import AppButton from '@/components/ui/button/AppButton.vue'
@@ -32,12 +32,16 @@ const ROLE_HINTS: Record<StudioRoleName, string> = {
   ending: 'The closing slide of a carousel (optional).'
 }
 
-const roles = ROLE_FRAMES
 const store = useEditorStore()
 const { open, portalActive } = useRetainedPopup()
 const menuCls = useMenuUI({ content: 'min-w-56' })
 
 const format = computed(() => hostedSession.value?.payload.value?.format ?? null)
+// Track FB-61 (PATCHES H-66): only the roles of the format's contract are offered — a single-image
+// format lists Cover alone; the menu is recovery for a deleted frame, never a "make it a carousel" switch.
+const roles = computed(() =>
+  contractRoles(format.value, hostedSession.value?.payload.value?.contract ?? null)
+)
 const existing = computed(() => {
   void tick
   return new Set(roleFrames(store.graph, store.state.currentPageId).map((f) => f.role))
