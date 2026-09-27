@@ -15,7 +15,9 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
-    # Railway / Docker health probe — never cached, never logged.
+    # Railway / Docker health probe — never cached, never logged. This is the
+    # EDITOR's health: 200 as long as nginx serves `dist/`, whatever the renderer
+    # is doing (S-11). The renderer is read separately at /healthz/render.
     location = /healthz {
         access_log off;
         add_header Content-Type text/plain;
@@ -23,17 +25,47 @@ server {
         return 200 "ok\n";
     }
 
+    # S-11: the renderer's state without the bearer — proxied to the sidecar's
+    # open `GET /healthz/render` ({ ok, renders, uptimeSec, inFlight, waiting });
+    # while the sidecar is restarting the answer is 503 `render_unavailable`.
+    location = /healthz/render {
+        access_log off;
+        proxy_pass http://127.0.0.1:${STUDIO_RENDER_PORT}/healthz/render;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        add_header Cache-Control "no-store" always;
+        error_page 502 504 =503 /healthz/render/unavailable;
+    }
+
+    location = /healthz/render/unavailable {
+        internal;
+        default_type application/json;
+        add_header Retry-After "2" always;
+        add_header Cache-Control "no-store" always;
+        return 503 '{"ok":false,"error":"render_unavailable","message":"The renderer is restarting; retry shortly."}';
+    }
+
     # Render sidecar (Track E3c Part E): `studio-render/server.ts` (Bun) in this
     # container on 127.0.0.1:${STUDIO_RENDER_PORT}. The app calls it server to
     # server with `Authorization: Bearer <STUDIO_INTERNAL_SECRET>`; the sidecar
     # verifies the value, nginx refuses anything without the header so the
     # embedded editor (same public origin) can never reach the renderer.
+    #
+    # S-11 / INC-18: the entrypoint restarts the sidecar whenever it exits
+    # (recycle, exhaustion, crash). In between its socket is closed and nginx
+    # would answer a bare 502 (or 504 past proxy_read_timeout); instead every
+    # /internal/ answer in that window is 503 `render_unavailable` with
+    # `Retry-After: 2` — the same body the sidecar sends while draining — so the
+    # app's `studio` renderer defers the job without spending an attempt.
+    # The sidecar's own 503s (render_busy, render_unavailable, not_configured)
+    # pass through untouched: proxy_intercept_errors stays off.
     location = /internal/healthz {
         access_log off;
         proxy_pass http://127.0.0.1:${STUDIO_RENDER_PORT}/internal/healthz;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
         add_header Cache-Control "no-store" always;
+        error_page 502 504 =503 /internal/unavailable;
     }
 
     location /internal/ {
@@ -49,6 +81,15 @@ server {
         proxy_request_buffering off;
         client_max_body_size 32m;
         add_header Cache-Control "no-store" always;
+        error_page 502 504 =503 /internal/unavailable;
+    }
+
+    location = /internal/unavailable {
+        internal;
+        default_type application/json;
+        add_header Retry-After "2" always;
+        add_header Cache-Control "no-store" always;
+        return 503 '{"error":"render_unavailable","message":"Render unavailable: the renderer is restarting; retry shortly."}';
     }
 
     # Hashed Vite output — immutable for a year.
