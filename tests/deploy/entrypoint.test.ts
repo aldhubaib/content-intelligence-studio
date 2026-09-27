@@ -12,31 +12,38 @@ import { fileURLToPath } from 'node:url'
 
 const ENTRYPOINT = fileURLToPath(new URL('../../deploy/entrypoint.sh', import.meta.url))
 
-/** The fake sidecar: pops the next exit code from PLAN, sleeps, exits; TERM → records it and exits 0. */
+/**
+ * The fake sidecar: pops the next exit code from PLAN, sleeps, exits; TERM →
+ * records it and exits 0. The trap is installed before anything is written so
+ * a signal can never race the fake's own start-up; a fake whose supervisor
+ * vanished (a test torn down by force) leaves on its own.
+ */
 const FAKE_BUN = `#!/bin/sh
 # fake bun: "$1" is studio-render/server.ts
 dir="$FAKE_DIR"
-echo "start $$" >> "$dir/sidecar.log"
 trap 'echo term >> "$dir/sidecar.log"; exit 0' TERM INT
+echo "start $$" >> "$dir/sidecar.log"
 n=$(cat "$dir/plan.index" 2>/dev/null || echo 0)
 code=$(sed -n "$((n + 1))p" "$dir/plan" 2>/dev/null)
 echo $((n + 1)) > "$dir/plan.index"
 if [ -z "$code" ]; then
-  # Plan exhausted: stay up until told to stop.
-  while :; do sleep 1; done
+  # Plan exhausted: stay up until told to stop (or the supervisor is gone).
+  while kill -0 "$PPID" 2>/dev/null; do sleep 1; done
+  exit 0
 fi
 sleep "\${FAKE_BUN_SLEEP:-0.2}"
 echo "exit $code" >> "$dir/sidecar.log"
 exit "$code"
 `
 
-/** The fake nginx entrypoint: writes its pid, stays up, exits 0 on TERM. */
+/** The fake nginx entrypoint: trap first, then its pid, stays up, exits 0 on TERM. */
 const FAKE_NGINX = `#!/bin/sh
 dir="$FAKE_DIR"
-echo $$ > "$dir/nginx.pid"
-echo "start $*" >> "$dir/nginx.log"
 trap 'echo term >> "$dir/nginx.log"; exit 0' TERM INT
-while :; do sleep 1; done
+echo "start $*" >> "$dir/nginx.log"
+echo $$ > "$dir/nginx.pid"
+while kill -0 "$PPID" 2>/dev/null; do sleep 1; done
+exit 0
 `
 
 interface Harness {
@@ -112,8 +119,14 @@ function parseLog(stdout: string): LogLine[] {
 
 afterEach(async () => {
   for (const h of harnesses.splice(0)) {
-    // A test that ended early leaves the supervisor running; `kill` on an exited process is a no-op.
-    if (h.proc.exitCode === null) h.proc.kill('SIGKILL')
+    // A test that ended early leaves the supervisor running: ask it to stop (it
+    // forwards TERM and exits once nginx is gone), force it only if it will not.
+    if (h.proc.exitCode === null) {
+      h.proc.kill('SIGTERM')
+      const forced = setTimeout(() => h.proc.kill('SIGKILL'), 5000)
+      await h.proc.exited
+      clearTimeout(forced)
+    }
     await h.proc.exited
     await rm(h.dir, { recursive: true, force: true })
   }
@@ -188,7 +201,11 @@ describe('deploy/entrypoint.sh', () => {
     'when nginx exits the container exits 1 and the sidecar is stopped',
     async () => {
       const h = await start([])
-      await waitFor(async () => (await h.sidecarLog()).length >= 1, 5000, 'the sidecar to start')
+      await waitFor(
+        async () => (await h.sidecarLog()).length >= 1 && (await Bun.file(join(h.dir, 'nginx.pid')).exists()),
+        5000,
+        'the sidecar and nginx to start'
+      )
       const nginxPid = await h.nginxPid()
       // nginx "exits 0": the container must still exit non-zero.
       process.kill(nginxPid, 'SIGTERM')
