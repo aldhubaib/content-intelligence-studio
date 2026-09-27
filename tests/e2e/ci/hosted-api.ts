@@ -1,5 +1,5 @@
 // CI: the stubbed app API every hosted e2e boots against (Track E3c Part B;
-// Track E3d-a FB-44 / FB-45; Track E3d-b1 FB-44 §6). Playwright's route
+// Track E3d-a FB-44 / FB-45; Track E3d-b1 FB-44 §6; Track FB-61 `contract`). Playwright's route
 // interception answers `GET|PUT /api/studio/templates/<id>`, the preview
 // candidates route and the app's templates page.
 import { readFileSync } from 'node:fs'
@@ -174,6 +174,107 @@ export interface APIOptions {
   candidates?: Array<typeof CANDIDATE> | null
   /** FB-58: the payload's `brand` block; default none (the library is not installed). */
   brand?: typeof BRAND | null
+  /**
+   * Track FB-61: the payload's `contract` block. Default → derived from `format.slideCap` the
+   * way the app does; `null` → absent (an older app), the Studio derives its own.
+   */
+  contract?: ContractBlock | null
+}
+
+/** The app's `StudioContractPayload` as the stub answers it (rows computed over the SAVED version). */
+export type ContractBlock = {
+  roles: Array<'cover' | 'repeat' | 'ending'>
+  slideCap: number
+  carousel: boolean
+  helper: string
+  rows: Array<{
+    role: 'cover' | 'repeat' | 'ending'
+    label: string
+    requirement: 'required' | 'optional' | null
+    needs: string
+    present: boolean
+    met: boolean
+    words: string
+  }>
+  unusedRoles: Array<'cover' | 'repeat' | 'ending'>
+}
+
+const CONTRACT_LABELS = {
+  cover: {
+    label: 'Cover (required) — needs content:title or content:body',
+    requirement: 'required' as const,
+    needs: 'content:title or content:body'
+  },
+  repeat: {
+    label: 'Repeat — needs content:body',
+    requirement: null,
+    needs: 'content:body'
+  },
+  ending: {
+    label: 'Ending (optional) — takes content:cta',
+    requirement: 'optional' as const,
+    needs: 'content:cta'
+  }
+}
+
+const SMOKE_ROW_WORDS = {
+  cover: 'met',
+  repeat: 'not met — add a repeat frame with content:body',
+  ending: 'not added — optional'
+}
+
+/** The contract block the app would send for `format` over the smoke fixture (cover present and met, nothing else). */
+export function contractFor(format: { slideCap: number }): ContractBlock {
+  const carousel = format.slideCap > 1
+  const roles: ContractBlock['roles'] = carousel ? ['cover', 'repeat', 'ending'] : ['cover']
+  return {
+    roles,
+    slideCap: format.slideCap,
+    carousel,
+    helper: carousel
+      ? `Cover is the first slide. Long pieces fill Repeat slides (up to ${format.slideCap}) and end on Ending.`
+      : 'This format is a single image. Design the Cover.',
+    rows: roles.map((role) => ({
+      role,
+      ...CONTRACT_LABELS[role],
+      present: role === 'cover',
+      met: role === 'cover',
+      words: SMOKE_ROW_WORDS[role]
+    })),
+    unusedRoles: []
+  }
+}
+
+/** The `GET /api/studio/templates/<id>` answer — the app's `StudioTemplatePayload` over the smoke fixture. */
+function templatePayload(options: APIOptions, ai: AIBlock, name: string, version: number) {
+  return {
+    document: templateDocument(options.fixture),
+    name,
+    version,
+    updatedAt: '2026-09-22T10:00:00Z',
+    format: options.format ?? FORMAT,
+    formats: [FORMAT, CAROUSEL],
+    collection: null,
+    brand: options.brand ?? null,
+    fonts: [],
+    bindings: {
+      vocabulary: VOCABULARY,
+      report: {
+        version: 'bindings-v3',
+        usable: { single: true, carousel: false },
+        statusWords: 'Usable'
+      }
+    },
+    ai,
+    preview: {
+      candidatesUrl: `${API}${CANDIDATES_PATH}`,
+      sampleText: SAMPLE_TEXT
+    },
+    // Track FB-61: absent (`contract: null`) on an older app; otherwise the app's block.
+    ...(options.contract === null
+      ? {}
+      : { contract: options.contract ?? contractFor(options.format ?? FORMAT) })
+  }
 }
 
 export async function installAPI(page: Page, saves: SavedBody[], options: APIOptions = {}) {
@@ -209,32 +310,7 @@ export async function installAPI(page: Page, saves: SavedBody[], options: APIOpt
         return route.fulfill({ status: 401, json: { error: 'unauthorized' } })
       }
       if (request.method() === 'GET') {
-        return route.fulfill({
-          json: {
-            document: templateDocument(options.fixture),
-            name,
-            version,
-            updatedAt: '2026-09-22T10:00:00Z',
-            format: options.format ?? FORMAT,
-            formats: [FORMAT, CAROUSEL],
-            collection: null,
-            brand: options.brand ?? null,
-            fonts: [],
-            bindings: {
-              vocabulary: VOCABULARY,
-              report: {
-                version: 'bindings-v3',
-                usable: { single: true, carousel: false },
-                statusWords: 'Usable'
-              }
-            },
-            ai,
-            preview: {
-              candidatesUrl: `${API}${CANDIDATES_PATH}`,
-              sampleText: SAMPLE_TEXT
-            }
-          }
-        })
+        return route.fulfill({ json: templatePayload(options, ai, name, version) })
       }
       if (request.method() === 'PUT') {
         const body = request.postDataJSON() as SavedBody
@@ -330,7 +406,12 @@ export async function installDesignAPI(
               platform: 'LINKEDIN'
             },
             formats: [FORMAT, CAROUSEL],
-            template: { id: TEMPLATE_ID, key: 'kuwaiti_card', label: 'Kuwaiti card', version: 3 },
+            template: {
+              id: TEMPLATE_ID,
+              key: 'kuwaiti_card',
+              label: 'Kuwaiti card',
+              version: 3
+            },
             content: DESIGN_CONTENT,
             userImageAssetId: null,
             ownCopy,
@@ -355,12 +436,19 @@ export async function installDesignAPI(
         const body = request.postDataJSON() as SavedBody
         saves.push(body)
         if (body.kind !== 'version') {
-          return route.fulfill({ status: 400, json: { error: 'no_draft_slot' } })
+          return route.fulfill({
+            status: 400,
+            json: { error: 'no_draft_slot' }
+          })
         }
         if (body.baseVersion !== version) {
           return route.fulfill({
             status: 409,
-            json: { error: 'conflict', currentVersion: version, currentDesignId: currentId }
+            json: {
+              error: 'conflict',
+              currentVersion: version,
+              currentDesignId: currentId
+            }
           })
         }
         version += 1

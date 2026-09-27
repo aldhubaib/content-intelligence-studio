@@ -264,6 +264,8 @@ export type BindingReason =
 
 export interface RoleReport {
   role: StudioRoleName
+  /** CI (Track FB-61): the format's contract names this role. */
+  inContract: boolean
   present: boolean
   frameId: string | null
   bindings: BindingRef[]
@@ -277,6 +279,10 @@ export interface BindingsReport {
   /** Bound layers outside every role frame — never rendered, listed so the person sees them. */
   strayBindings: BindingRef[]
   usable: { single: boolean; carousel: boolean }
+  /** CI (Track FB-61): the roles the format's contract names. */
+  contractRoles: readonly StudioRoleName[]
+  /** Role frames present that the contract does not name — "Not used by this format". */
+  unusedRoles: StudioRoleName[]
 }
 
 export const ROLE_LABELS: Record<StudioRoleName, string> = {
@@ -288,7 +294,7 @@ export const ROLE_LABELS: Record<StudioRoleName, string> = {
 export const BINDINGS_USABLE = 'Usable'
 export const BINDINGS_NOT_USABLE_PREFIX = 'Not usable yet — '
 
-const BLOCKING: ReadonlySet<BindingReason['code']> = new Set([
+export const BLOCKING: ReadonlySet<BindingReason['code']> = new Set([
   'no_cover',
   'cover_without_text',
   'repeat_without_body'
@@ -318,9 +324,13 @@ export function bindingsStatusWords(roles: readonly RoleReport[]): string {
   return `${BINDINGS_NOT_USABLE_PREFIX}${bindingReasonWords(blocking[0])}`
 }
 
-/** "Cover · OK" / "Repeat · repeat has no content:body" / "Ending · not added" */
+/** CI (Track FB-61): a role frame the format never renders — the app's `ROLE_UNUSED_WORDS`. */
+export const ROLE_UNUSED_WORDS = 'Not used by this format'
+
+/** "Cover · OK" / "Repeat · repeat has no content:body" / "Ending · not added" / "Repeat · not used by this format" */
 export function roleStatusWords(role: RoleReport): string {
   if (!role.present) return `${ROLE_LABELS[role.role]} · not added`
+  if (!role.inContract) return `${ROLE_LABELS[role.role]} · ${ROLE_UNUSED_WORDS.toLowerCase()}`
   if (role.status === 'ok') return `${ROLE_LABELS[role.role]} · OK`
   const words = role.reasons.length > 0 ? bindingReasonWords(role.reasons[0]) : 'missing'
   return `${ROLE_LABELS[role.role]} · ${words}`
@@ -352,12 +362,16 @@ export function bindingsReport(
   graph: SceneGraph,
   vocabulary: StudioBindingsVocabulary = DEFAULT_VOCABULARY,
   format: Pick<StudioFormat, 'slideCap'> | null = null,
-  pageId?: string
+  pageId?: string,
+  contract: { roles: readonly string[] } | null = null
 ): BindingsReport {
   const frames = roleFrames(graph, pageId)
   const all = listBindings(graph, vocabulary, pageId)
   const roleFrameIds = new Set(frames.map((f) => f.frameId))
+  // CI (Track FB-61): the roles the format's contract names; a role outside it is never judged.
+  const inContractRoles = contractRoles(format, contract)
   const roles: RoleReport[] = ROLE_FRAMES.map((role) => {
+    const inContract = inContractRoles.includes(role)
     const frame = frames.find((f) => f.role === role) ?? null
     const bindings = frame ? all.filter((b) => b.frameId === frame.frameId) : []
     const reasons: BindingReason[] = []
@@ -366,12 +380,13 @@ export function bindingsReport(
       else if (!has(bindings, 'content:title') && !has(bindings, 'content:body'))
         reasons.push({ code: 'cover_without_text' })
     }
-    if (role === 'repeat' && frame && !has(bindings, 'content:body'))
+    if (role === 'repeat' && inContract && frame && !has(bindings, 'content:body'))
       reasons.push({ code: 'repeat_without_body' })
     if (frame) reasons.push(...shapeProblems(bindings, vocabulary))
     const blocking = reasons.some((r) => BLOCKING.has(r.code))
     return {
       role,
+      inContract,
       present: Boolean(frame),
       frameId: frame?.frameId ?? null,
       bindings,
@@ -383,12 +398,14 @@ export function bindingsReport(
   const repeat = roles[1]
   const single = cover.present && cover.status === 'ok'
   const carousel =
-    single && repeat.present && repeat.status === 'ok' && (format === null || format.slideCap > 1)
+    single && inContractRoles.includes('repeat') && repeat.present && repeat.status === 'ok'
   return {
     version: 'bindings-v3',
     roles,
     strayBindings: all.filter((b) => b.frameId === null || !roleFrameIds.has(b.frameId)),
-    usable: { single, carousel }
+    usable: { single, carousel },
+    contractRoles: inContractRoles,
+    unusedRoles: roles.filter((r) => r.present && !r.inContract).map((r) => r.role)
   }
 }
 
@@ -415,7 +432,11 @@ export function migrateLegacyBindings(
   vocabulary: StudioBindingsVocabulary = DEFAULT_VOCABULARY,
   pageId?: string
 ): LegacyMigrationReport {
-  const report: LegacyMigrationReport = { renamedLayers: 0, roleFrameNamed: false, changed: false }
+  const report: LegacyMigrationReport = {
+    renamedLayers: 0,
+    roleFrameNamed: false,
+    changed: false
+  }
   const frames = topLevelFrames(graph, pageId)
   if (frames.length > 0 && !frames.some((f) => roleOfFrameName(f.name) !== null)) {
     update(frames[0].id, { name: 'cover' })

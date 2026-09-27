@@ -245,7 +245,8 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       store.graph,
       vocabulary.value,
       payload.value?.format ?? null,
-      store.state.currentPageId
+      store.state.currentPageId,
+      payload.value?.contract ?? null // CI (Track FB-61): the app's contract wins
     )
   })
   const saveState = computed<HostedSaveState>(() => {

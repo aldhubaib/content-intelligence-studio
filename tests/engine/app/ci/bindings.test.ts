@@ -20,6 +20,12 @@ import {
   roleOfFrameName,
   roleStatusWords
 } from '@/app/ci/bindings'
+import {
+  contractChecklist,
+  contractHelperWords,
+  contractOf,
+  contractRowLabel
+} from '@/app/ci/contract'
 import { createEditorStore } from '@/app/editor/session'
 
 const FORMAT: StudioFormat = {
@@ -81,7 +87,13 @@ describe('parseBindingName', () => {
       bindingOf(
         {
           name: 'content:body',
-          pluginData: [{ pluginId: 'content-intelligence', key: 'slot', value: 'headline' }]
+          pluginData: [
+            {
+              pluginId: 'content-intelligence',
+              key: 'slot',
+              value: 'headline'
+            }
+          ]
         },
         DEFAULT_VOCABULARY
       )
@@ -90,14 +102,24 @@ describe('parseBindingName', () => {
       bindingOf(
         {
           name: 'Headline',
-          pluginData: [{ pluginId: 'content-intelligence', key: 'slot', value: 'headline' }]
+          pluginData: [
+            {
+              pluginId: 'content-intelligence',
+              key: 'slot',
+              value: 'headline'
+            }
+          ]
         },
         DEFAULT_VOCABULARY
       )
     ).toEqual({ kind: 'content', slot: 'title' })
-    expect(bindingName({ kind: 'brand', slotKind: 'company-logo-dark', name: 'Mark' })).toBe(
-      'brand:company-logo-dark:Mark'
-    )
+    expect(
+      bindingName({
+        kind: 'brand',
+        slotKind: 'company-logo-dark',
+        name: 'Mark'
+      })
+    ).toBe('brand:company-logo-dark:Mark')
   })
 
   test('role frames are read by name, case-insensitive, first wins', () => {
@@ -106,9 +128,21 @@ describe('parseBindingName', () => {
     expect(roleOfFrameName('Portrait')).toBeNull()
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
-    graph.createNode('FRAME', page.id, { name: 'Cover', width: 10, height: 10 })
-    graph.createNode('FRAME', page.id, { name: 'cover', width: 10, height: 10 })
-    graph.createNode('FRAME', page.id, { name: 'Ending', width: 10, height: 10 })
+    graph.createNode('FRAME', page.id, {
+      name: 'Cover',
+      width: 10,
+      height: 10
+    })
+    graph.createNode('FRAME', page.id, {
+      name: 'cover',
+      width: 10,
+      height: 10
+    })
+    graph.createNode('FRAME', page.id, {
+      name: 'Ending',
+      width: 10,
+      height: 10
+    })
     const roles = roleFrames(graph)
     expect(roles.map((r) => [r.role, r.name])).toEqual([
       ['cover', 'Cover'],
@@ -126,7 +160,11 @@ describe('bindingsReport', () => {
 
   test('a cover with a text and an image is usable for a single-image format', () => {
     const graph = graphWith((g, page) => {
-      const cover = g.createNode('FRAME', page, { name: 'cover', width: 1080, height: 1350 })
+      const cover = g.createNode('FRAME', page, {
+        name: 'cover',
+        width: 1080,
+        height: 1350
+      })
       g.createNode('TEXT', cover.id, { name: 'content:title' })
       g.createNode('RECTANGLE', cover.id, { name: 'content:image' })
       g.createNode('RECTANGLE', cover.id, { name: 'brand:company-logo-light' })
@@ -151,7 +189,11 @@ describe('bindingsReport', () => {
   test('no cover frame → not usable; a repeat without content:body says so', () => {
     const none = bindingsReport(
       graphWith((g, page) => {
-        const frame = g.createNode('FRAME', page, { name: 'Portrait', width: 1080, height: 1350 })
+        const frame = g.createNode('FRAME', page, {
+          name: 'Portrait',
+          width: 1080,
+          height: 1350
+        })
         g.createNode('TEXT', frame.id, { name: 'content:title' })
       }),
       DEFAULT_VOCABULARY,
@@ -162,7 +204,11 @@ describe('bindingsReport', () => {
 
     const carousel = bindingsReport(
       graphWith((g, page) => {
-        const cover = g.createNode('FRAME', page, { name: 'cover', width: 1080, height: 1350 })
+        const cover = g.createNode('FRAME', page, {
+          name: 'cover',
+          width: 1080,
+          height: 1350
+        })
         g.createNode('TEXT', cover.id, { name: 'content:title' })
         const repeat = g.createNode('FRAME', page, {
           name: 'repeat',
@@ -184,7 +230,11 @@ describe('bindingsReport', () => {
   test('duplicates, text on a shape and an image on a text are warnings, never a gate', () => {
     const report = bindingsReport(
       graphWith((g, page) => {
-        const cover = g.createNode('FRAME', page, { name: 'cover', width: 1080, height: 1350 })
+        const cover = g.createNode('FRAME', page, {
+          name: 'cover',
+          width: 1080,
+          height: 1350
+        })
         g.createNode('TEXT', cover.id, { name: 'content:title' })
         g.createNode('TEXT', cover.id, { name: 'content:title' })
         g.createNode('RECTANGLE', cover.id, { name: 'content:body' })
@@ -219,7 +269,11 @@ describe('migrateLegacyBindings', () => {
     const update = (id: string, changes: Partial<{ name: string }>) => graph.updateNode(id, changes)
 
     const first = migrateLegacyBindings(graph, update, DEFAULT_VOCABULARY)
-    expect(first).toEqual({ renamedLayers: 3, roleFrameNamed: true, changed: true })
+    expect(first).toEqual({
+      renamedLayers: 3,
+      roleFrameNamed: true,
+      changed: true
+    })
     expect(graph.getNode(frame.id)?.name).toBe('cover')
     expect(
       graph
@@ -229,13 +283,21 @@ describe('migrateLegacyBindings', () => {
     ).toEqual(['Plain text', 'content:image', 'content:subtitle', 'content:title'])
 
     const second = migrateLegacyBindings(graph, update, DEFAULT_VOCABULARY)
-    expect(second).toEqual({ renamedLayers: 0, roleFrameNamed: false, changed: false })
+    expect(second).toEqual({
+      renamedLayers: 0,
+      roleFrameNamed: false,
+      changed: false
+    })
   })
 
   test('an existing role frame is left alone and the document root is never renamed', () => {
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
-    graph.createNode('FRAME', page.id, { name: 'Ending', width: 10, height: 10 })
+    graph.createNode('FRAME', page.id, {
+      name: 'Ending',
+      width: 10,
+      height: 10
+    })
     const rootName = graph.getNode(graph.rootId)?.name
     const report = migrateLegacyBindings(
       graph,
@@ -251,7 +313,13 @@ describe('addRoleFrame', () => {
   test('creates a correctly named frame at the format size to the right of the last frame; refuses a duplicate', () => {
     const store = createEditorStore()
     const page = store.state.currentPageId
-    store.graph.createNode('FRAME', page, { name: 'cover', x: 0, y: 0, width: 1080, height: 1350 })
+    store.graph.createNode('FRAME', page, {
+      name: 'cover',
+      x: 0,
+      y: 0,
+      width: 1080,
+      height: 1350
+    })
     expect(nextRoleFramePosition(store.graph, page)).toEqual({ x: 1200, y: 0 })
 
     const repeat = addRoleFrame(store, 'repeat', FORMAT)
@@ -284,5 +352,107 @@ describe('contractRoles', () => {
     ])
     expect(contractRoles(FORMAT, { roles: [] })).toEqual(['cover'])
     expect(contractRoles(FORMAT, { roles: ['hero'] })).toEqual(['cover'])
+  })
+})
+
+// Track FB-61 (PATCHES H-67): the format-aware checklist over the live report.
+describe('contract checklist', () => {
+  function graphWith(build: (graph: SceneGraph, pageId: string) => void): SceneGraph {
+    const graph = new SceneGraph()
+    build(graph, graph.getPages()[0].id)
+    return graph
+  }
+
+  test('a repeat frame on a single-image format is "not used by this format" — never judged, never a carousel', () => {
+    const report = bindingsReport(
+      graphWith((g, page) => {
+        const cover = g.createNode('FRAME', page, {
+          name: 'cover',
+          width: 1080,
+          height: 1350
+        })
+        g.createNode('TEXT', cover.id, { name: 'content:title' })
+        // No content:body — on a carousel format this would be repeat_without_body.
+        const repeat = g.createNode('FRAME', page, {
+          name: 'repeat',
+          x: 1200,
+          width: 1080,
+          height: 1350
+        })
+        g.createNode('TEXT', repeat.id, { name: 'content:cta' })
+      }),
+      DEFAULT_VOCABULARY,
+      FORMAT
+    )
+    expect(report.contractRoles).toEqual(['cover'])
+    expect(report.unusedRoles).toEqual(['repeat'])
+    const repeat = report.roles.find((r) => r.role === 'repeat')
+    expect(repeat?.inContract).toBe(false)
+    expect(repeat?.reasons).toEqual([])
+    expect(repeat && roleStatusWords(repeat)).toBe('Repeat · not used by this format')
+    expect(report.usable).toEqual({ single: true, carousel: false })
+    expect(bindingsStatusWords(report.roles)).toBe('Usable')
+  })
+
+  test('rows follow the live graph and keep the app words; the payload contract wins over slideCap', () => {
+    const report = bindingsReport(
+      graphWith((g, page) => {
+        const cover = g.createNode('FRAME', page, {
+          name: 'cover',
+          width: 1080,
+          height: 1350
+        })
+        g.createNode('TEXT', cover.id, { name: 'content:body' })
+        g.createNode('FRAME', page, {
+          name: 'repeat',
+          x: 1200,
+          width: 1080,
+          height: 1350
+        })
+      }),
+      DEFAULT_VOCABULARY,
+      FORMAT,
+      undefined,
+      { roles: ['cover', 'repeat', 'ending'] }
+    )
+    expect(report.contractRoles).toEqual(['cover', 'repeat', 'ending'])
+    const rows = contractChecklist({ roles: report.contractRoles }, report)
+    expect(rows.map((r) => [r.role, r.met, r.words])).toEqual([
+      ['cover', true, 'met'],
+      ['repeat', false, 'not met — repeat has no content:body'],
+      ['ending', false, 'not added — optional']
+    ])
+    expect(rows.map((r) => r.label)).toEqual([
+      'Cover (required) — needs content:title or content:body',
+      'Repeat — needs content:body',
+      'Ending (optional) — takes content:cta'
+    ])
+    expect(contractRowLabel('ending')).toBe('Ending (optional) — takes content:cta')
+    expect(contractHelperWords({ carousel: false, slideCap: 1 })).toBe(
+      'This format is a single image. Design the Cover.'
+    )
+    expect(contractHelperWords({ carousel: true, slideCap: 10 })).toBe(
+      'Cover is the first slide. Long pieces fill Repeat slides (up to 10) and end on Ending.'
+    )
+  })
+
+  test('contractOf derives the block from the format on an older app and returns the payload block as is', () => {
+    expect(contractOf(CAROUSEL, null)).toEqual({
+      roles: ['cover', 'repeat', 'ending'],
+      slideCap: 10,
+      carousel: true,
+      helper:
+        'Cover is the first slide. Long pieces fill Repeat slides (up to 10) and end on Ending.'
+    })
+    expect(contractOf(FORMAT, undefined).roles).toEqual(['cover'])
+    const payload = {
+      roles: ['cover' as const],
+      slideCap: 1,
+      carousel: false,
+      helper: 'from the app',
+      rows: [],
+      unusedRoles: []
+    }
+    expect(contractOf(CAROUSEL, payload)).toBe(payload)
   })
 })

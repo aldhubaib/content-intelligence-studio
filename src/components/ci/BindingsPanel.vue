@@ -1,15 +1,19 @@
-<!-- CI: Bindings side panel for the hosted Studio (Track E3d-a, FB-44 §2 / §3; replaces the E3c Slots panel). -->
+<!-- CI: Bindings side panel for the hosted Studio (Track E3d-a, FB-44 §2 / §3; replaces the E3c Slots panel).
+     Track FB-61 (PATCHES H-67): the format-aware checklist — one row per contract role, the helper
+     sentence, and one yellow line per role frame the format never renders. -->
 <script setup lang="ts">
 import { computed } from 'vue'
 
 import {
   bindingsStatusWords,
   ROLE_LABELS,
+  ROLE_UNUSED_WORDS,
   roleStatusWords,
   type BindingRef,
   type RoleReport
 } from '@/app/ci/bindings'
 import { hostedSession } from '@/app/ci/boot'
+import { contractChecklist, contractOf } from '@/app/ci/contract'
 import AddRoleFrameMenu from '@/components/ci/AddRoleFrameMenu.vue'
 import ShapeControl from '@/components/ci/ShapeControl.vue'
 import AppAlert from '@/components/ui/feedback/AppAlert.vue'
@@ -21,7 +25,25 @@ const report = computed(() => session.value?.bindings.value ?? null)
 const status = computed(() => session.value?.status.value ?? { kind: 'loading' as const })
 const tick = computed(() => session.value?.graphTick.value ?? 0)
 
-const roles = computed<RoleReport[]>(() => report.value?.roles ?? [])
+// Track FB-61: the panel lists the CONTRACT's roles plus any present role frame the format never renders.
+const contract = computed(() =>
+  contractOf(session.value?.payload.value?.format ?? null, session.value?.payload.value?.contract)
+)
+const checklist = computed(() =>
+  report.value
+    ? contractChecklist(
+        {
+          roles: contract.value.roles,
+          rows: session.value?.payload.value?.contract?.rows
+        },
+        report.value
+      )
+    : []
+)
+const roles = computed<RoleReport[]>(() =>
+  (report.value?.roles ?? []).filter((r) => r.inContract || r.present)
+)
+const unusedRoles = computed(() => report.value?.unusedRoles ?? [])
 const strays = computed<BindingRef[]>(() => report.value?.strayBindings ?? [])
 const statusWords = computed(() => (report.value ? bindingsStatusWords(report.value.roles) : ''))
 const usable = computed(() => report.value?.usable.single ?? false)
@@ -112,6 +134,59 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
     </div>
     <!-- FB-58: Rectangle · Circle for the selected brand:* / content image layer. -->
     <ShapeControl :tick="tick" />
+    <!-- Track FB-61: the format's contract as a checklist, then the one helper sentence. -->
+    <ul
+      v-if="checklist.length > 0"
+      class="flex flex-col gap-0.5 px-2 pb-1"
+      aria-label="What this format needs"
+      data-test-id="ci-contract-checklist"
+    >
+      <li
+        v-for="row in checklist"
+        :key="row.role"
+        class="flex items-baseline gap-2 text-[10px]"
+        :data-test-id="`ci-contract-${row.role}`"
+        :data-met="row.met ? 'true' : 'false'"
+        :title="row.label"
+      >
+        <span
+          class="w-3 shrink-0 text-center"
+          :class="
+            row.met
+              ? 'text-surface'
+              : row.requirement === 'optional'
+                ? 'text-muted'
+                : 'text-warning-text'
+          "
+          aria-hidden="true"
+          >{{ row.met ? '✓' : row.requirement === 'optional' ? '–' : '!' }}</span
+        >
+        <span class="min-w-0 flex-1 truncate text-surface">{{ row.label }}</span>
+        <span
+          class="shrink-0"
+          :class="
+            row.met
+              ? 'text-surface'
+              : row.requirement === 'optional'
+                ? 'text-muted'
+                : 'text-warning-text'
+          "
+          :data-test-id="`ci-contract-words-${row.role}`"
+          >{{ row.words }}</span
+        >
+      </li>
+    </ul>
+    <p class="px-2 pb-1.5 text-[10px] text-muted" data-test-id="ci-contract-helper">
+      {{ contract.helper }}
+    </p>
+    <AppAlert
+      v-for="role in unusedRoles"
+      :key="`unused:${role}`"
+      tone="warning"
+      :heading="`${ROLE_LABELS[role]} — ${ROLE_UNUSED_WORDS}`"
+      :data-test-id="`ci-contract-unused-${role}`"
+      class="mx-2 mb-1"
+    />
     <AppAlert
       v-for="reason in warnings"
       :key="`${reason.code}:${'name' in reason ? reason.name : ''}`"
@@ -143,7 +218,7 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
               <span
                 class="truncate text-[10px]"
                 :class="
-                  !role.present
+                  !role.present || !role.inContract
                     ? 'text-muted'
                     : role.status === 'ok'
                       ? 'text-surface'

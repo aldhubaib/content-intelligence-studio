@@ -50,8 +50,15 @@ test.describe('hosted mode', () => {
     await expect(page.getByTestId('ci-role-words-cover')).toHaveText('OK')
     await expect(page.getByTestId('ci-binding-cover-content:title')).toBeVisible()
     await expect(page.getByTestId('ci-binding-cover-content:image')).toBeVisible()
-    await expect(page.getByTestId('ci-role-words-repeat')).toHaveText('not added')
-    await expect(page.getByTestId('ci-role-words-ending')).toHaveText('not added')
+    // Track FB-61: a single-image format's contract is the Cover alone — the panel lists no
+    // Repeat / Ending row and the checklist has one met row plus the single-image helper.
+    await expect(page.getByTestId('ci-role-repeat')).toHaveCount(0)
+    await expect(page.getByTestId('ci-role-ending')).toHaveCount(0)
+    await expect(page.getByTestId('ci-contract-checklist').locator('li')).toHaveCount(1)
+    await expect(page.getByTestId('ci-contract-words-cover')).toHaveText('met')
+    await expect(page.getByTestId('ci-contract-helper')).toHaveText(
+      'This format is a single image. Design the Cover.'
+    )
     // FB-45: native chrome — no tab bar, the menu bar is the first row, the title
     // carries the read-only format line and OpenPencil's save state.
     await expect(page.getByTestId('tabbar-tab')).toHaveCount(0)
