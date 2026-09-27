@@ -24,14 +24,20 @@
 //     does INSTANCE → FRAME the same way), so name, fill, size, position,
 //     pluginData, opacity and effects all survive and the selection stays.
 
-import type { Vector } from '@open-pencil/scene-graph/primitives'
 import type { Fill, SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 import { createInstanceOverrideState } from '@open-pencil/scene-graph'
+import type { Vector } from '@open-pencil/scene-graph/primitives'
 
 import type { EditorStore } from '@/app/editor/session'
 
-import { bindingOf, DEFAULT_VOCABULARY, isContentTextSlot, PLUGIN_ID, pluginValue } from './bindings'
 import type { StudioBindingsVocabulary } from './api'
+import {
+  bindingOf,
+  DEFAULT_VOCABULARY,
+  isContentTextSlot,
+  PLUGIN_ID,
+  pluginValue
+} from './bindings'
 
 /** The pluginData keys a brand shape carries (written by `buildBrandLibraryGraph`). */
 export const BRAND_ASSET_PLUGIN_KEYS = ['brandAsset', 'brandAssetKind', 'role'] as const
@@ -141,7 +147,9 @@ function viewportInsertionPoint(
   const centre = store.viewportCanvasCenter()
   const canvas = store.screenToCanvas(centre.x, centre.y)
   const parentOffset =
-    parentId === store.state.currentPageId ? { x: 0, y: 0 } : store.graph.getAbsolutePosition(parentId)
+    parentId === store.state.currentPageId
+      ? { x: 0, y: 0 }
+      : store.graph.getAbsolutePosition(parentId)
   return {
     x: canvas.x - parentOffset.x - size.width / 2,
     y: canvas.y - parentOffset.y - size.height / 2

@@ -37,7 +37,11 @@ const MARK: StudioBrandAsset = {
 const BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 4])
 
 /** Copy the published library's component (and its image) into a store's graph, the way `materialize` does. */
-function publishInto(store: EditorStore, asset: StudioBrandAsset, size = { width: 640, height: 480 }) {
+function publishInto(
+  store: EditorStore,
+  asset: StudioBrandAsset,
+  size = { width: 640, height: 480 }
+) {
   const { graph: library, componentIds } = buildBrandLibraryGraph([{ asset, bytes: BYTES, size }])
   const source = library.getNode(componentIds[0])!
   const page = store.graph.getPages()[0]
@@ -83,11 +87,23 @@ describe('isBrandLibraryComponent', () => {
       height: 100
     })
     store.graph.createNode('RECTANGLE', legacy.id, {
-      fills: [{ type: 'IMAGE', color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1, visible: true, imageHash: 'h' }]
+      fills: [
+        {
+          type: 'IMAGE',
+          color: { r: 0, g: 0, b: 0, a: 1 },
+          opacity: 1,
+          visible: true,
+          imageHash: 'h'
+        }
+      ]
     })
     expect(isBrandLibraryComponent(store.graph, legacy)).toBe(true)
 
-    const plain = store.graph.createNode('COMPONENT', page.id, { name: 'Button', width: 10, height: 10 })
+    const plain = store.graph.createNode('COMPONENT', page.id, {
+      name: 'Button',
+      width: 10,
+      height: 10
+    })
     expect(isBrandLibraryComponent(store.graph, plain)).toBe(false)
     expect(isBrandLibraryComponent(store.graph, undefined)).toBe(false)
   })
@@ -98,7 +114,11 @@ describe('insertBrandShape', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
     const page = store.graph.getPages()[0]
-    const cover = store.graph.createNode('FRAME', page.id, { name: 'cover', width: 1080, height: 1350 })
+    const cover = store.graph.createNode('FRAME', page.id, {
+      name: 'cover',
+      width: 1080,
+      height: 1350
+    })
 
     const id = insertBrandShape(store, component.id, 100, 200, cover.id)
     expect(typeof id).toBe('string')
@@ -107,7 +127,11 @@ describe('insertBrandShape', () => {
     expect(node.parentId).toBe(cover.id)
     expect(node.childIds).toEqual([])
     expect(node.name).toBe(brandAssetBindingName(HERO))
-    expect(bindingOf(node, DEFAULT_VOCABULARY)).toEqual({ kind: 'brand', slotKind: 'user-image', name: 'Hero' })
+    expect(bindingOf(node, DEFAULT_VOCABULARY)).toEqual({
+      kind: 'brand',
+      slotKind: 'user-image',
+      name: 'Hero'
+    })
     expect({ x: node.x, y: node.y, width: node.width, height: node.height }).toEqual({
       x: 100,
       y: 200,
@@ -163,7 +187,11 @@ describe('insertBrandShape', () => {
   test('answers undefined for a component that is not a brand asset — upstream keeps the instance path', () => {
     const store = makeStore()
     const page = store.graph.getPages()[0]
-    const button = store.graph.createNode('COMPONENT', page.id, { name: 'Button', width: 80, height: 32 })
+    const button = store.graph.createNode('COMPONENT', page.id, {
+      name: 'Button',
+      width: 80,
+      height: 32
+    })
     expect(insertBrandShape(store, button.id, 0, 0)).toBeUndefined()
     expect(insertBrandShape(store, 'missing', 0, 0)).toBeUndefined()
   })
@@ -175,7 +203,9 @@ describe('insertBrandShape', () => {
     const instanceId = store.createInstanceFromComponent(component.id, 0, 0)!
     expect(store.graph.getNode(instanceId)?.type).toBe('INSTANCE')
 
-    setHostedInsertHandler((componentId, x, y, parentId) => insertBrandShape(store, componentId, x, y, parentId))
+    setHostedInsertHandler((componentId, x, y, parentId) =>
+      insertBrandShape(store, componentId, x, y, parentId)
+    )
     const shapeId = store.createInstanceFromComponent(component.id, 5, 6)!
     const shape = store.graph.getNode(shapeId)!
     expect(shape.type).toBe('RECTANGLE')
@@ -183,7 +213,11 @@ describe('insertBrandShape', () => {
 
     // A non-brand component still becomes an instance through the same seam.
     const page = store.graph.getPages()[0]
-    const button = store.graph.createNode('COMPONENT', page.id, { name: 'Button', width: 80, height: 32 })
+    const button = store.graph.createNode('COMPONENT', page.id, {
+      name: 'Button',
+      width: 80,
+      height: 32
+    })
     const other = store.createInstanceFromComponent(button.id, 0, 0)!
     expect(store.graph.getNode(other)?.type).toBe('INSTANCE')
   })
@@ -195,7 +229,11 @@ describe('insertBrandShape', () => {
     expect(facts.name).toBe('brand:user-image:Hero')
     expect(facts.width).toBe(640)
     expect(facts.fills[0].type).toBe('IMAGE')
-    expect(facts.pluginData.map((e) => e.key).sort()).toEqual(['brandAsset', 'brandAssetKind', 'role'])
+    expect(facts.pluginData.map((e) => e.key).sort()).toEqual([
+      'brandAsset',
+      'brandAssetKind',
+      'role'
+    ])
     expect(facts.pluginData.every((e) => e.pluginId === PLUGIN_ID)).toBe(true)
   })
 })
@@ -205,7 +243,11 @@ describe('detachBrandInstances (heal on load)', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
     const page = store.graph.getPages()[0]
-    const cover = store.graph.createNode('FRAME', page.id, { name: 'cover', width: 1080, height: 1350 })
+    const cover = store.graph.createNode('FRAME', page.id, {
+      name: 'cover',
+      width: 1080,
+      height: 1350
+    })
     const instanceId = store.createInstanceFromComponent(component.id, 120, 130, cover.id)!
     store.updateNode(instanceId, { opacity: 0.5, cornerRadius: 24 })
     const instance = store.graph.getNode(instanceId)!
@@ -262,7 +304,11 @@ describe('detachBrandInstances (heal on load)', () => {
   test('leaves an instance of an ordinary component alone', () => {
     const store = makeStore()
     const page = store.graph.getPages()[0]
-    const button = store.graph.createNode('COMPONENT', page.id, { name: 'Button', width: 80, height: 32 })
+    const button = store.graph.createNode('COMPONENT', page.id, {
+      name: 'Button',
+      width: 80,
+      height: 32
+    })
     store.graph.createNode('RECTANGLE', button.id, { width: 80, height: 32 })
     const instanceId = store.createInstanceFromComponent(button.id, 0, 0)!
     const graph = deserializeGraph(structuredClone(serializeGraph(store.graph, '0.15.1')))
@@ -273,11 +319,24 @@ describe('detachBrandInstances (heal on load)', () => {
   test('a legacy instance named brand:* over one image child (no pluginData anywhere) is detached too', () => {
     const graph = new SceneGraph()
     const page = graph.getPages()[0]
-    const component = graph.createNode('COMPONENT', page.id, { name: 'brand:company-logo-light', width: 300, height: 100 })
+    const component = graph.createNode('COMPONENT', page.id, {
+      name: 'brand:company-logo-light',
+      width: 300,
+      height: 100
+    })
     graph.createNode('RECTANGLE', component.id, {
       width: 300,
       height: 100,
-      fills: [{ type: 'IMAGE', color: { r: 0, g: 0, b: 0, a: 1 }, opacity: 1, visible: true, imageHash: 'logo', imageScaleMode: 'FIT' }]
+      fills: [
+        {
+          type: 'IMAGE',
+          color: { r: 0, g: 0, b: 0, a: 1 },
+          opacity: 1,
+          visible: true,
+          imageHash: 'logo',
+          imageScaleMode: 'FIT'
+        }
+      ]
     })
     const instance = graph.createInstance(component.id, page.id, { x: 10, y: 10 })!
     expect(detachBrandInstances(graph).detached).toBe(1)
@@ -311,7 +370,18 @@ describe('Shape — Rectangle ⇄ Circle', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
     const id = insertBrandShape(store, component.id, 30, 40)!
-    store.updateNode(id, { opacity: 0.7, effects: [{ type: 'DROP_SHADOW', visible: true, radius: 4, color: { r: 0, g: 0, b: 0, a: 0.5 }, offset: { x: 0, y: 2 } } as never] })
+    store.updateNode(id, {
+      opacity: 0.7,
+      effects: [
+        {
+          type: 'DROP_SHADOW',
+          visible: true,
+          radius: 4,
+          color: { r: 0, g: 0, b: 0, a: 0.5 },
+          offset: { x: 0, y: 2 }
+        } as never
+      ]
+    })
     const before = { ...store.graph.getNode(id)! }
     store.select([id])
 

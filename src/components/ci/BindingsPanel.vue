@@ -11,6 +11,7 @@ import {
 } from '@/app/ci/bindings'
 import { hostedSession } from '@/app/ci/boot'
 import AddRoleFrameMenu from '@/components/ci/AddRoleFrameMenu.vue'
+import ShapeControl from '@/components/ci/ShapeControl.vue'
 import AppAlert from '@/components/ui/feedback/AppAlert.vue'
 import PanelItemRow from '@/components/ui/panel/PanelItemRow.vue'
 import PanelSection from '@/components/ui/panel/PanelSection.vue'
@@ -109,6 +110,8 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
       </p>
       <AddRoleFrameMenu :tick="tick" />
     </div>
+    <!-- FB-58: Rectangle · Circle for the selected brand:* / content image layer. -->
+    <ShapeControl :tick="tick" />
     <AppAlert
       v-for="reason in warnings"
       :key="`${reason.code}:${'name' in reason ? reason.name : ''}`"

@@ -486,7 +486,9 @@ describe('hosted session', () => {
     // The next save carries the plain node.
     expect(await session.saveVersion()).toBe(true)
     const sent = remote.savedDocuments.at(-1) as {
-      graph: { nodes: Array<[string, { type: string; fills: Array<{ type: string }>; childIds: string[] }]> }
+      graph: {
+        nodes: Array<[string, { type: string; fills: Array<{ type: string }>; childIds: string[] }]>
+      }
     }
     const saved = sent.graph.nodes.find(([id]) => id === instance.id)?.[1]
     expect(saved?.type).toBe('RECTANGLE')
