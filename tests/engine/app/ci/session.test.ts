@@ -418,6 +418,82 @@ describe('hosted session', () => {
     expect(session.saveState.value).toEqual({ kind: 'unsaved' })
   })
 
+  test('FB-58 Part B: a brand asset saved as an INSTANCE opens as the plain shape — same id, no dirty flag, nothing in history; the next save writes the plain node', async () => {
+    // A template saved before FB-58: a brand COMPONENT (pluginData brandAsset) on
+    // the page and an INSTANCE of it inside `cover` with one locked image child.
+    const graph = templateGraph()
+    const page = graph.getPages()[0]
+    const cover = graph.getChildren(page.id)[0]
+    const component = graph.createNode('COMPONENT', page.id, {
+      name: 'brand:user-image:Hero',
+      x: 2000,
+      y: 2000,
+      width: 640,
+      height: 480,
+      fills: [],
+      pluginData: [
+        { pluginId: 'content-intelligence', key: 'brandAsset', value: 'asset-hero' },
+        { pluginId: 'content-intelligence', key: 'brandAssetKind', value: 'user-image' },
+        { pluginId: 'content-intelligence', key: 'role', value: 'accent' }
+      ]
+    })
+    graph.createNode('RECTANGLE', component.id, {
+      name: 'Image',
+      width: 640,
+      height: 480,
+      fills: [
+        {
+          type: 'IMAGE',
+          color: { r: 0, g: 0, b: 0, a: 1 },
+          opacity: 1,
+          visible: true,
+          imageHash: 'hero-hash',
+          imageScaleMode: 'FILL'
+        }
+      ]
+    })
+    graph.images.set('hero-hash', new Uint8Array([1, 2, 3]))
+    const instance = graph.createInstance(component.id, cover.id, { x: 120, y: 130 })
+    if (!instance) throw new Error('Expected an instance')
+    expect(instance.type).toBe('INSTANCE')
+    expect(instance.childIds).toHaveLength(1)
+
+    const { store, remote, session, host } = await booted(
+      payload({ document: serializeGraph(graph, '0.15.1') })
+    )
+    const healed = store.graph.getNode(instance.id)
+    expect(healed?.type).toBe('RECTANGLE')
+    expect(healed?.name).toBe('brand:user-image:Hero')
+    expect(healed?.childIds).toEqual([])
+    expect(healed?.fills[0]?.type).toBe('IMAGE')
+    expect(healed?.fills[0]?.imageHash).toBe('hero-hash')
+    expect({ x: healed?.x, y: healed?.y, width: healed?.width, height: healed?.height }).toEqual({
+      x: 120,
+      y: 130,
+      width: 640,
+      height: 480
+    })
+    expect([...store.graph.getAllNodes()].filter((n) => n.type === 'INSTANCE')).toHaveLength(0)
+    // Healing is not an edit: clean, saved at the server's version, nothing to
+    // undo, and the host heard only the import's own dirty → clean pair (the
+    // same two posts a plain template makes on load).
+    expect(session.dirty.value).toBe(false)
+    expect(session.saveState.value).toEqual({ kind: 'saved', version: 4 })
+    expect(store.undo.canUndo).toBe(false)
+    const dirtyPosts = host.posted.filter((m) => m.type === 'studio:dirty')
+    expect(dirtyPosts.length).toBeLessThanOrEqual(2)
+    expect(dirtyPosts.at(-1)).toEqual({ type: 'studio:dirty', dirty: false })
+    // The next save carries the plain node.
+    expect(await session.saveVersion()).toBe(true)
+    const sent = remote.savedDocuments.at(-1) as {
+      graph: { nodes: Array<[string, { type: string; fills: Array<{ type: string }>; childIds: string[] }]> }
+    }
+    const saved = sent.graph.nodes.find(([id]) => id === instance.id)?.[1]
+    expect(saved?.type).toBe('RECTANGLE')
+    expect(saved?.fills[0]?.type).toBe('IMAGE')
+    expect(saved?.childIds).toEqual([])
+  })
+
   test('FB-44 §3: the Bindings report follows edits — a content:title text turns the cover OK', async () => {
     const { store, session } = await booted()
     const frame = frameOf(store)

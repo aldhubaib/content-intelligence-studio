@@ -53,6 +53,7 @@ import {
   type BindingsReport
 } from './bindings'
 import { installBrandLibrary, type BrandLibraryReport } from './brand-library'
+import { detachBrandInstances } from './brand-shape'
 import { HOSTED_COPY } from './copy'
 import { deserializeGraph, type SerializedDocument } from './document'
 import { installHostedFonts, type HostedFontReport } from './fonts'
@@ -411,6 +412,11 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       load.signal.throwIfAborted()
 
       const graph = deserializeGraph(documentToOpen(data))
+      // FB-58: a brand asset saved as an INSTANCE (templates from before the
+      // plain-shape insertion) heals into the same plain shape on the
+      // deserialised graph — before the store adopts it, so nothing is dirty
+      // and nothing enters history; the next save writes the plain node.
+      detachBrandInstances(graph, vocabulary.value)
       load.update({ phase: 'decoding', detail: data.name })
       await applyImportedDocument(store, graph, load)
       load.signal.throwIfAborted()
