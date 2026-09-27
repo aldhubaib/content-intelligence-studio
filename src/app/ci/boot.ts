@@ -10,7 +10,10 @@ import { shallowRef } from 'vue'
 import type { EditorStore } from '@/app/editor/session'
 import { toast } from '@/app/shell/ui'
 
+import { DEFAULT_VOCABULARY } from './bindings'
+import { insertBrandShape } from './brand-shape'
 import { hostedConfig, hostedConfigError, isHosted } from './hosted'
+import { setHostedInsertHandler } from './insert-override'
 import { disableLocalRecovery, discardStaleRecoverySnapshots } from './recovery'
 import { setHostedSaveHandler } from './save-override'
 import { createHostedSession, type HostedSession } from './session'
@@ -35,6 +38,17 @@ export function bootHostedStudio(store: EditorStore): Promise<HostedSession | nu
     const session = createHostedSession({ config: hostedConfig, store })
     hostedSession.value = session
     setHostedSaveHandler(() => session.saveVersion())
+    // FB-58: a brand asset from the Assets library lands as a plain shape, never an instance.
+    setHostedInsertHandler((componentId, x, y, parentId) =>
+      insertBrandShape(
+        store,
+        componentId,
+        x,
+        y,
+        parentId,
+        session.payload.value?.bindings.vocabulary ?? DEFAULT_VOCABULARY
+      )
+    )
     try {
       await session.load()
     } catch (error) {
@@ -52,5 +66,6 @@ export function resetHostedBoot(): void {
   hostedSession.value?.dispose()
   hostedSession.value = null
   setHostedSaveHandler(null)
+  setHostedInsertHandler(null)
   bootPromise = null
 }

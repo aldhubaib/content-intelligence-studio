@@ -4,6 +4,8 @@ import { createEditor } from '@open-pencil/core/editor'
 import { BUILTIN_IO_FORMATS, IORegistry } from '@open-pencil/core/io'
 import { SceneGraph } from '@open-pencil/scene-graph'
 
+// CI: FB-58 — hosted mode inserts a brand-library component as a plain shape.
+import { hostedInsertHandler } from '@/app/ci/insert-override'
 import { recordPreparationOutcome } from '@/app/diagnostics'
 import {
   getActiveEditorStore,
@@ -203,6 +205,14 @@ export function createEditorStore(initialGraph?: SceneGraph) {
 
   const store = {
     ...editor,
+    // CI: FB-58 — every insertion path (canvas drop, Assets panel, catalog) lands
+    // here; a hosted session may answer a brand-library component with a plain
+    // shape (`src/app/ci/insert-override.ts`). `undefined` = upstream runs.
+    createInstanceFromComponent(componentId: string, x?: number, y?: number, parentId?: string) {
+      const handled = hostedInsertHandler()?.(componentId, x, y, parentId)
+      if (handled !== undefined) return handled
+      return editor.createInstanceFromComponent(componentId, x, y, parentId)
+    },
     state,
     preparationController,
     canvasReady: canvasReadiness.promise,
