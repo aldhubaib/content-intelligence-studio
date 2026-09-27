@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   StudioAPIError,
   StudioConflictError,
+  StudioNameTakenError,
   StudioUnauthorizedError,
   createStudioAPI
 } from '@/app/ci/api'
@@ -98,6 +99,25 @@ describe('createStudioAPI', () => {
       expect(error.status).toBe(500)
       expect(error.message).toBe('Database is away')
     })
+  })
+
+  test('FB-55: a 409 name_taken is its own error carrying the app sentence, never the stale-version conflict', async () => {
+    const sentence = 'A template named Card already exists in this workspace. Choose another name.'
+    const { fetcher } = mockFetch(() =>
+      Response.json({ error: { code: 'name_taken', message: sentence } }, { status: 409 })
+    )
+    const client = api(fetcher)
+    const rename = client.renameTemplate('card')
+    await expect(rename).rejects.toBeInstanceOf(StudioNameTakenError)
+    await rename.catch((error: StudioNameTakenError) => {
+      expect(error.message).toBe(sentence)
+      expect(error.status).toBe(409)
+      expect(error.code).toBe('name_taken')
+      expect(error).not.toBeInstanceOf(StudioConflictError)
+    })
+    await expect(
+      client.duplicateTemplate({ document: emptyDocument, name: 'Card' })
+    ).rejects.toBeInstanceOf(StudioNameTakenError)
   })
 
   test('FB-45: rename and duplicate are PUTs with their own kind', async () => {

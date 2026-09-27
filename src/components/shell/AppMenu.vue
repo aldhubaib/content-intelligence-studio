@@ -14,11 +14,12 @@ import {
   MenubarSubTrigger,
   MenubarTrigger
 } from 'reka-ui'
-import { watch } from 'vue'
+import { computed, watch } from 'vue'
 import IconChevronRight from '~icons/lucide/chevron-right'
 
 import { vTestId, useI18n } from '@open-pencil/vue'
 
+import { hostedSession } from '@/app/ci/boot'
 import { isHosted, isHostedDesign } from '@/app/ci/hosted'
 import { useEditorStore } from '@/app/editor/active-store'
 import { openSettingsDialog } from '@/app/settings/dialog'
@@ -50,6 +51,8 @@ const store = useEditorStore()
 const hosted = isHosted()
 // CI: Track E3d-c — a design's name is the app's read-only `<idea> · <format> · v{n}`; no inline rename.
 const nameLocked = isHostedDesign()
+// CI: Track FB-55 — the app refused the last inline rename (name taken): its sentence sits under the name.
+const renameError = computed(() => (hosted ? (hostedSession.value?.renameError.value ?? null) : null))
 
 const { rename, editingName, startRename, commitRename } = useDocumentNameRename(store)
 const nameInput = templateRef<HTMLInputElement>('nameInput')
@@ -109,6 +112,14 @@ const subMenuCls = useMenuUI({ content: 'min-w-44' })
         <icon-lucide-sidebar class="size-3.5" />
       </IconButton>
     </div>
+    <p
+      v-if="renameError"
+      data-test-id="ci-rename-error"
+      role="alert"
+      class="px-2 pb-1 text-[11px] text-danger"
+    >
+      {{ renameError }}
+    </p>
     <div v-if="!IS_TAURI" class="flex items-center px-1 pb-1">
       <MenubarRoot class="scrollbar-none flex items-center gap-0.5 overflow-x-auto">
         <MenubarMenu v-for="menu in topMenus" :key="menu.label">

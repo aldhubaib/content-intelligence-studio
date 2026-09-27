@@ -246,6 +246,18 @@ export class StudioConflictError extends StudioAPIError {
   }
 }
 
+/**
+ * 409 `name_taken` (Track FB-55) — the rename / duplicate name another live
+ * template of the workspace carries. The message is the app's sentence, shown
+ * under the name field; the document keeps its old name.
+ */
+export class StudioNameTakenError extends StudioAPIError {
+  constructor(message: string) {
+    super(message, 409, 'name_taken')
+    this.name = 'StudioNameTakenError'
+  }
+}
+
 /** 401 — the bearer is no longer accepted; the host must mint a new one. */
 export class StudioUnauthorizedError extends StudioAPIError {
   constructor() {
@@ -332,6 +344,11 @@ export function createStudioAPI(options: StudioAPIOptions): StudioAPI {
     } catch {
       body = null
     }
+    // CI: Track FB-55 — a taken name is its own 409 code, never the stale-version conflict.
+    if (response.status === 409 && body?.error?.code === 'name_taken')
+      return new StudioNameTakenError(
+        body.error.message ?? 'A template with this name already exists. Choose another name.'
+      )
     if (response.status === 409)
       return new StudioConflictError(body?.currentVersion ?? null, body?.currentDesignId ?? null)
     const message =

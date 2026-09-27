@@ -22,7 +22,7 @@
 // templates; Save as new template is gone.
 
 import { useIntervalFn } from '@vueuse/core'
-import { computed, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
+import { computed, ref, shallowRef, watch, type ComputedRef, type Ref } from 'vue'
 
 import { IS_BROWSER } from '@open-pencil/core/constants'
 
@@ -35,6 +35,7 @@ import { toast } from '@/app/shell/ui'
 import { hostedAIModelSettings, setHostedAIConfig } from './ai'
 import {
   StudioConflictError,
+  StudioNameTakenError,
   StudioUnauthorizedError,
   createStudioAPI,
   isDesignPayload,
@@ -137,6 +138,8 @@ export interface HostedSession {
   readonly aiEnabled: ComputedRef<boolean>
   /** Track E3d-b1: Preview with real content — overlay + Approved candidates; never saved. */
   readonly preview: SessionPreview
+  /** Track FB-55: the app's sentence when the last inline rename was refused (name taken); null otherwise. */
+  readonly renameError: Ref<string | null>
   /** Load the template into the store; resolves when the canvas shows it. */
   load(): Promise<void>
   /** File → Save version / ⌘S. */
@@ -337,14 +340,25 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     })
   )
 
+  const renameError = ref<string | null>(null)
+
   async function rename(name: string): Promise<void> {
     if (name === lastSentName) return
+    renameError.value = null
     try {
       const result = await api.renameTemplate(name)
       lastSentName = result.name
       if (result.name !== store.state.documentName) store.state.documentName = result.name
       bridge.post({ type: 'studio:renamed', name: result.name })
     } catch (error) {
+      // CI: Track FB-55 — a taken name: the sentence goes under the name field and the document
+      // keeps the name the app knows; every other failure keeps the toast.
+      if (error instanceof StudioNameTakenError) {
+        renameError.value = error.message
+        if (lastSentName !== null && store.state.documentName !== lastSentName)
+          store.state.documentName = lastSentName
+        return
+      }
       const message = error instanceof Error ? error.message : String(error)
       toast.error(HOSTED_COPY.renameFailed(message))
     }
@@ -736,6 +750,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     brandReport,
     aiEnabled,
     preview,
+    renameError,
     load,
     saveVersion,
     saveDraft,

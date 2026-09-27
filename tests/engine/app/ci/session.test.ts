@@ -5,6 +5,7 @@ import { SceneGraph, type SceneNode } from '@open-pencil/scene-graph'
 
 import {
   StudioConflictError,
+  StudioNameTakenError,
   type StudioAPI,
   type StudioDesignPayload,
   type StudioDocumentPayload,
@@ -156,6 +157,8 @@ function fakeAPI(data: StudioDocumentPayload) {
   /** The document of every save, as sent — the preview must never be in it. */
   const savedDocuments: unknown[] = []
   const renames: string[] = []
+  /** FB-55: thrown by the next renameTemplate call (once). */
+  let failNextRename: Error | null = null
   const duplicates: Array<{ name?: string }> = []
   const jsonFetches: string[] = []
   let nextVersion = data.version
@@ -171,6 +174,11 @@ function fakeAPI(data: StudioDocumentPayload) {
     loadTemplate: async () => data,
     renameTemplate: async (name) => {
       renames.push(name)
+      if (failNextRename) {
+        const error = failNextRename
+        failNextRename = null
+        throw error
+      }
       return { name }
     },
     duplicateTemplate: async (body) => {
@@ -196,6 +204,9 @@ function fakeAPI(data: StudioDocumentPayload) {
     saves,
     savedDocuments,
     renames,
+    failRename(error: Error) {
+      failNextRename = error
+    },
     duplicates,
     jsonFetches,
     failNextWith(error: Error) {
@@ -532,6 +543,34 @@ describe('hosted session', () => {
     })
     expect(remote.renames).toEqual(['Landscape card'])
     expect(host.posted.at(-1)).toEqual({ type: 'studio:renamed', name: 'Landscape card' })
+  })
+
+  test('FB-55: a refused rename (name taken) puts the sentence under the name and keeps the old name; the next accepted rename clears it', async () => {
+    const { store, host, remote, session } = await booted()
+    const before = store.state.documentName
+    const sentence = 'A template named Landscape card already exists in this workspace. Choose another name.'
+    remote.failRename(new StudioNameTakenError(sentence))
+    store.state.documentName = 'Landscape card'
+    await new Promise((resolve) => {
+      setTimeout(resolve, RENAME_DEBOUNCE_MS + 20)
+    })
+    expect(remote.renames).toEqual(['Landscape card'])
+    expect(session.renameError.value).toBe(sentence)
+    expect(store.state.documentName).toBe(before)
+    expect(host.posted.some((m) => m.type === 'studio:renamed')).toBe(false)
+    // The revert itself never asks the app again.
+    await new Promise((resolve) => {
+      setTimeout(resolve, RENAME_DEBOUNCE_MS + 20)
+    })
+    expect(remote.renames).toEqual(['Landscape card'])
+    store.state.documentName = 'Landscape card 2'
+    await new Promise((resolve) => {
+      setTimeout(resolve, RENAME_DEBOUNCE_MS + 20)
+    })
+    expect(remote.renames).toEqual(['Landscape card', 'Landscape card 2'])
+    expect(session.renameError.value).toBeNull()
+    expect(store.state.documentName).toBe('Landscape card 2')
+    expect(host.posted.at(-1)).toEqual({ type: 'studio:renamed', name: 'Landscape card 2' })
   })
 
   test('a stored draft is opened and left dirty so it becomes a version on the next save', async () => {
