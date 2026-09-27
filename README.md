@@ -29,8 +29,18 @@
 >   only grows: it frees every per-render allocation, recycles itself after
 >   `STUDIO_RENDER_MAX_RENDERS` renders (default 40, exit 0) and, should
 >   CanvasKit ever refuse a surface, answers `503 render_unavailable` and
->   exits 70 so the container restarts (INC-13, `PATCHES.md` S-10). Locally:
->   `STUDIO_INTERNAL_SECRET=<≥16 chars> bun run render:dev`, tests
+>   exits 70 (INC-13, `PATCHES.md` S-10). **The editor never dies with the
+>   renderer** (INC-18, S-11): `deploy/entrypoint.sh` supervises the sidecar
+>   and starts it again whenever it exits — at once after a recycle, after a
+>   1 → 30 s backoff after a crash — while nginx keeps serving `dist/`; the
+>   container exits only when nginx does (`railway.json` restarts it
+>   `ALWAYS`). Renders are serialised — one in flight, up to
+>   `STUDIO_RENDER_QUEUE_MAX` (8) waiting, then `503 render_busy` with
+>   `Retry-After` — and while the sidecar restarts nginx answers
+>   `503 render_unavailable` for `/internal/`, so the app's worker defers
+>   instead of failing. `GET /healthz` is the editor, `GET /healthz/render`
+>   (no bearer) the renderer: `{ ok, renders, uptimeSec, inFlight, waiting }`.
+>   Locally: `STUDIO_INTERNAL_SECRET=<≥16 chars> bun run render:dev`, tests
 >   `bun run render:test`, types + lint `bun run render:check`. Contract in
 >   `studio-render/protocol.ts`.
 > - **Hosted look and AI.** In hosted mode the editor paints IBM Carbon —
@@ -50,7 +60,7 @@
 > - **Environment.** `PORT` (nginx), `STUDIO_APP_ORIGIN`,
 >   `STUDIO_INTERNAL_SECRET`, `STUDIO_RENDER_PORT` / `_HOST`,
 >   `STUDIO_RENDER_MAX_BODY_MB` / `_FONT_CACHE_MB` / `_WARM` /
->   `_MAX_RENDERS` — meanings in `PATCHES.md` § Environment.
+>   `_MAX_RENDERS` / `_QUEUE_MAX` — meanings in `PATCHES.md` § Environment.
 > - **Rebase on the next upstream release.** `git fetch upstream && git
 >   rebase v<next>` on `studio-main`, resolve only the files in
 >   `PATCHES.md`, rebuild with the flag, run `bun run check`, bump the

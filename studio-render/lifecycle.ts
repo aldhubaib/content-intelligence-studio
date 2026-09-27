@@ -4,8 +4,9 @@
 // CanvasKit's WASM heap only grows; whatever a render leaves behind stays
 // until the process ends, and once `MakeSurface` answers null (or the module
 // aborts) nothing in the process will ever render again. The container's
-// entrypoint already exits when the sidecar exits, and Railway restarts the
-// container, so the cheapest way back to a fresh heap is to leave:
+// entrypoint supervises the sidecar (S-11 / INC-18): it starts a fresh process
+// the moment this one exits while nginx keeps serving the editor, so the
+// cheapest way back to a fresh heap is to leave:
 //
 //   * recycle   — after `maxRenders` successful renders the sidecar stops
 //                 accepting, finishes what is in flight and exits 0.
