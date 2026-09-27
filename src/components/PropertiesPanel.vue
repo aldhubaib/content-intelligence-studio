@@ -7,6 +7,8 @@ import { useI18n } from '@open-pencil/vue'
 import { useAIChat } from '@/app/ai/chat/use'
 import { hostedAIEnabled } from '@/app/ci/ai'
 import { isHosted } from '@/app/ci/hosted'
+import { NAMES_COPY } from '@/app/ci/names'
+import NamesPanel from '@/components/ci/NamesPanel.vue'
 
 import ChatPanel from './ChatPanel.vue'
 import CodePanel from './CodePanel.vue'
@@ -17,6 +19,8 @@ const { activeTab } = useAIChat()
 const { panels } = useI18n()
 // CI: the hosted Studio shows the AI tab only when the workspace's AI switch is on (ADR-058 §8).
 const showAI = computed(() => !isHosted() || hostedAIEnabled.value)
+// CI: the **Names** tab exists in hosted mode only (Track FB-65); standalone keeps its three tabs.
+const hosted = isHosted()
 watch(showAI, (visible) => {
   if (!visible && activeTab.value === 'ai') activeTab.value = 'design'
 })
@@ -44,6 +48,16 @@ watch(showAI, (visible) => {
         >
           <icon-lucide-code class="size-3" />
           {{ panels.code }}
+        </TabsTrigger>
+        <!-- CI: FB-65 — Names, after Code and before AI (whose rule is untouched). -->
+        <TabsTrigger
+          v-if="hosted"
+          value="names"
+          data-test-id="properties-tab-names"
+          class="relative flex items-center gap-1 rounded px-2.5 py-1 text-[11px] text-muted hover:text-surface data-[state=active]:font-semibold data-[state=active]:text-surface after:absolute after:inset-x-2 after:-bottom-[9px] after:h-0.5 after:rounded-full after:bg-transparent data-[state=active]:after:bg-accent"
+        >
+          <icon-lucide-tag class="size-3" />
+          {{ NAMES_COPY.tab }}
         </TabsTrigger>
         <TabsTrigger
           v-if="showAI"
@@ -73,6 +87,11 @@ watch(showAI, (visible) => {
         :hidden="activeTab !== 'code'"
       >
         <CodePanel :active="activeTab === 'code'" />
+      </TabsContent>
+
+      <!-- CI: FB-65 — the Names tab, hosted only. -->
+      <TabsContent v-if="hosted" value="names" class="flex min-h-0 flex-1 flex-col">
+        <NamesPanel />
       </TabsContent>
 
       <TabsContent

@@ -39,6 +39,13 @@ export interface StudioBindingsVocabulary {
   roles: string[]
   /** Legacy `slot:<name>` → v3 slot (`headline` → `title`, `cover` → `image`, …). */
   legacy: Record<string, string>
+  /**
+   * Track FB-65: what the system writes into each name, keyed by the FULL
+   * layer name (`content:title`, `brand:user-image`, `cover`) plus the one
+   * `brand:<kind>:<asset name>` key. The **Names** tab renders from it;
+   * absent on an older app → every row shows its name alone.
+   */
+  descriptions?: Record<string, string>
 }
 
 export type StudioRoleName = 'cover' | 'repeat' | 'ending'

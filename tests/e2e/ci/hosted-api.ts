@@ -62,6 +62,23 @@ export const VOCABULARY = {
     attribution: 'subtitle',
     article_url: 'article-url',
     cover: 'image'
+  },
+  // Track FB-65: what the system writes into each name — the app's `bindingDescriptions()`.
+  descriptions: {
+    'content:title': 'the hook / title',
+    'content:subtitle': 'subtitle (demand name or topic)',
+    'content:body': 'the body text; on a carousel the chunk for that slide',
+    'content:cta': 'call to action',
+    'content:article-url': 'the article link (text)',
+    'content:image': "the source post's image (image fill)",
+    'content:ai-image': 'reserved, placeholder today',
+    'brand:user-image': 'your default user image',
+    'brand:company-logo-light': 'light logo, for dark backgrounds',
+    'brand:company-logo-dark': 'dark logo, for light backgrounds',
+    'brand:<kind>:<asset name>': 'a named asset instead of the default',
+    cover: 'required, the first / only image',
+    repeat: 'one per body chunk on carousel formats',
+    ending: 'optional last slide with the CTA'
   }
 }
 

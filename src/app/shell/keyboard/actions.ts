@@ -7,7 +7,7 @@ import type { EditorStore } from '@/app/editor/active-store'
 
 type KeyboardActionsOptions = {
   store: EditorStore
-  activeTab: Ref<'design' | 'code' | 'ai'>
+  activeTab: Ref<'design' | 'code' | 'names' | 'ai'> // CI: FB-65 Names tab
   isMobile: ReturnType<typeof useViewportKind>['isMobile']
   runCommand: ReturnType<typeof useEditorCommands>['runCommand']
   setOpacityTarget: ReturnType<typeof useEditorCommands>['setOpacityTarget']

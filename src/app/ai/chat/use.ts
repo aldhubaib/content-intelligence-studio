@@ -33,7 +33,8 @@ import {
   setRememberCredentials
 } from '@/app/settings/credentials/media'
 
-const activeTab = ref<'design' | 'code' | 'ai'>('design')
+// CI: `names` is the hosted Studio's fourth tab (Track FB-65); standalone never sets it.
+const activeTab = ref<'design' | 'code' | 'names' | 'ai'>('design')
 
 const chatSession = createChatSessionManager({
   isConfigured,
