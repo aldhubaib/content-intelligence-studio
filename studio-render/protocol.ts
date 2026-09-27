@@ -11,11 +11,18 @@
 //     503 not_configured       the sidecar has no secret
 //     503 render_unavailable   the process is draining (recycle after STUDIO_RENDER_MAX_RENDERS
 //                              renders, or the CanvasKit heap is exhausted and the process is
-//                              about to exit); the caller retries later — INC-13
+//                              about to exit); the caller retries later — INC-13. nginx answers
+//                              the same body (`Retry-After: 2`) while the sidecar is restarting
+//                              (S-11: 502 / 504 → 503).
+//     503 render_busy          one render runs at a time and STUDIO_RENDER_QUEUE_MAX renders
+//                              already wait; `{ retryAfterMs }` + `Retry-After` say when — S-11
 //     500 render_failed        the engine threw
 //   GET  /internal/healthz     { ok, engine, canvasKit, configured, fontsCached }   (no bearer)
 //   GET  /internal/health      Authorization: Bearer <STUDIO_INTERNAL_SECRET>
-//                              { ok, engineVersion, renders, rssMb, heapMb, uptimeSec }
+//                              { ok, engineVersion, renders, rssMb, heapMb, uptimeSec, queue }
+//   GET  /healthz/render       { ok, renders, uptimeSec, inFlight, waiting }   (no bearer; nginx
+//                              proxies the public `/healthz/render` here — the renderer's state
+//                              separate from the editor's `/healthz` — S-11)
 //
 // Fonts are content-addressed: a `FontRef` names a face by sha256 of its
 // bytes; the sidecar keeps the bytes in memory by that hash and answers 428
@@ -63,6 +70,7 @@ export type RenderErrorCode =
   | 'fonts_missing'
   | 'not_configured'
   | 'render_unavailable'
+  | 'render_busy'
   | 'render_failed'
 
 export interface RenderErrorBody {
@@ -70,6 +78,28 @@ export interface RenderErrorBody {
   message: string
   missing?: string[]
   report?: unknown
+  /** `render_busy`: how long the caller should wait before retrying (also `Retry-After`, seconds). */
+  retryAfterMs?: number
+}
+
+// CI: S-11 — the render queue as the health bodies report it.
+export interface RenderQueueFacts {
+  /** 1 while a render runs, else 0. */
+  inFlight: number
+  /** Renders waiting behind the one in flight. */
+  waiting: number
+  /** How many may wait before the next arrival is refused with 503 `render_busy`. */
+  capacity: number
+}
+
+// CI: S-11 — the open `GET /healthz/render` body: the renderer's state without the bearer.
+export interface RenderHealthBody {
+  /** False while draining or unconfigured — a new render would get 503. */
+  ok: boolean
+  renders: number
+  uptimeSec: number
+  inFlight: number
+  waiting: number
 }
 
 // CI: INC-13 — the bearer-gated `GET /internal/health` body: process facts the app's operator reads.
@@ -83,6 +113,8 @@ export interface SidecarHealthBody {
   /** CanvasKit WASM heap size (grows only; a healthy process plateaus), or null before the first render. */
   heapMb: number | null
   uptimeSec: number
+  /** Absent before S-11. */
+  queue?: RenderQueueFacts
 }
 
 export const MAX_SCALE = 8

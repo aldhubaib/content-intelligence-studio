@@ -15,9 +15,12 @@
 //   STUDIO_RENDER_FONT_CACHE_MB  in-memory font cache cap (default 64).
 //   STUDIO_RENDER_WARM           `1` (default) warms CanvasKit at boot.
 //   STUDIO_RENDER_MAX_RENDERS    successful renders before the process recycles itself
-//                                (default 40, `0` = never; INC-13). The entrypoint exits with
-//                                the sidecar and Railway restarts the container with a fresh
-//                                CanvasKit heap.
+//                                (default 40, `0` = never; INC-13). Since S-11 the entrypoint
+//                                supervises the sidecar and starts it again at once — a recycle
+//                                costs a CanvasKit warm-up, never the editor.
+//   STUDIO_RENDER_QUEUE_MAX      renders that may wait behind the ONE in flight (default 8,
+//                                `0` = refuse whenever busy; S-11). Past that: 503 `render_busy`
+//                                with `Retry-After`.
 
 import {
   ENGINE_VERSION,
@@ -32,11 +35,14 @@ import { DEFAULT_MAX_RENDERS, SidecarLifecycle, isHeapExhaustion } from './lifec
 import {
   type RenderErrorBody,
   type RenderErrorCode,
+  type RenderHealthBody,
+  type RenderQueueFacts,
   type RenderRequest,
   type SidecarHealthBody,
   fontReadinessProblem,
   parseRenderRequest
 } from './protocol'
+import { DEFAULT_QUEUE_MAX, QueueFullError, RenderQueue } from './queue'
 
 export type SidecarLog = (line: Record<string, unknown>) => void
 
@@ -48,6 +54,8 @@ export interface SidecarOptions {
   log?: SidecarLog
   /** Recycle / self-heal (INC-13); absent in unit tests that only exercise the protocol. */
   lifecycle?: SidecarLifecycle
+  /** One render at a time + bounded wait (S-11); absent → renders run unserialised (protocol tests). */
+  queue?: RenderQueue
   /** Injected for tests; defaults to the engine's own counters. */
   stats?: typeof engineStats
 }
@@ -57,6 +65,7 @@ export interface SidecarBootOptions extends SidecarOptions {
   host: string
   warm: boolean
   maxRenders: number
+  queueMax: number
 }
 
 const SECRET_MIN_LENGTH = 16
@@ -81,7 +90,8 @@ export function readOptions(
     port: Math.floor(number('STUDIO_RENDER_PORT', 8788)),
     host: env.STUDIO_RENDER_HOST?.trim() || '127.0.0.1',
     warm: (env.STUDIO_RENDER_WARM ?? '1') !== '0',
-    maxRenders: Math.floor(number('STUDIO_RENDER_MAX_RENDERS', DEFAULT_MAX_RENDERS, { allowZero: true }))
+    maxRenders: Math.floor(number('STUDIO_RENDER_MAX_RENDERS', DEFAULT_MAX_RENDERS, { allowZero: true })),
+    queueMax: Math.floor(number('STUDIO_RENDER_QUEUE_MAX', DEFAULT_QUEUE_MAX, { allowZero: true }))
   }
 }
 
@@ -130,6 +140,14 @@ function healthResponse(options: SidecarOptions): Response {
   })
 }
 
+function queueFacts(queue: RenderQueue | undefined): RenderQueueFacts {
+  return queue
+    ? { inFlight: queue.inFlight, waiting: queue.waiting, capacity: queue.capacity }
+    : { inFlight: 0, waiting: 0, capacity: 0 }
+}
+
+const uptimeSec = () => Math.round((Date.now() - STARTED_AT) / 1000)
+
 /** `GET /internal/health` — bearer-gated process facts for the app's health page (INC-13). */
 function processHealthResponse(options: SidecarOptions): Response {
   const stats = (options.stats ?? engineStats)()
@@ -139,7 +157,28 @@ function processHealthResponse(options: SidecarOptions): Response {
     renders: stats.renders,
     rssMb: Math.round(process.memoryUsage().rss / MB),
     heapMb: stats.heapBytes === null ? null : Math.round(stats.heapBytes / MB),
-    uptimeSec: Math.round((Date.now() - STARTED_AT) / 1000)
+    uptimeSec: uptimeSec(),
+    queue: queueFacts(options.queue)
+  }
+  return json(200, body)
+}
+
+/**
+ * `GET /healthz/render` — the renderer's state without the bearer (S-11). nginx
+ * proxies the public `/healthz/render` here so an operator (and later the app's
+ * `/api/health`) sees the renderer separately from the editor's `/healthz`,
+ * which stays 200 as long as nginx serves `dist/`. Read-only facts, nothing
+ * about memory or the engine build.
+ */
+function renderHealthResponse(options: SidecarOptions): Response {
+  const stats = (options.stats ?? engineStats)()
+  const facts = queueFacts(options.queue)
+  const body: RenderHealthBody = {
+    ok: Boolean(options.secret) && !options.lifecycle?.draining,
+    renders: stats.renders,
+    uptimeSec: uptimeSec(),
+    inFlight: facts.inFlight,
+    waiting: facts.waiting
   }
   return json(200, body)
 }
@@ -150,6 +189,21 @@ function drainingResponse(lifecycle: SidecarLifecycle): Response {
       ? 'the renderer is restarting after exhausting its memory'
       : 'the renderer is recycling'
   return fail(503, 'render_unavailable', `Render unavailable: ${why}; retry shortly.`)
+}
+
+/** S-11: the queue is full — say when to come back, in the body and in `Retry-After`. */
+function busyResponse(retryAfterMs: number, options: SidecarOptions): Response {
+  const facts = queueFacts(options.queue)
+  options.log?.({ event: 'render.busy', waiting: facts.waiting, capacity: facts.capacity, retryAfterMs })
+  return json(
+    503,
+    {
+      error: 'render_busy',
+      message: `Render busy: ${facts.waiting} renders are already waiting; retry in ${retryAfterMs} ms.`,
+      retryAfterMs
+    } satisfies RenderErrorBody,
+    { 'retry-after': String(Math.max(1, Math.ceil(retryAfterMs / 1000))) }
+  )
 }
 
 type BodyResult = { ok: true; request: RenderRequest } | { ok: false; response: Response }
@@ -264,11 +318,11 @@ async function renderResponse(
 export async function handleRequest(request: Request, options: SidecarOptions): Promise<Response> {
   const route = routeOf(new URL(request.url))
 
-  if (route === '/healthz') {
+  if (route === '/healthz' || route === '/healthz/render') {
     if (request.method !== 'GET' && request.method !== 'HEAD') {
       return fail(405, 'bad_request', 'Method not allowed.')
     }
-    return healthResponse(options)
+    return route === '/healthz' ? healthResponse(options) : renderHealthResponse(options)
   }
 
   if (route !== '/render' && route !== '/health') return fail(404, 'bad_request', 'Not found.')
@@ -284,7 +338,14 @@ export async function handleRequest(request: Request, options: SidecarOptions): 
   }
 
   if (route === '/health') return processHealthResponse(options)
+  return handleRender(request, options)
+}
+
+/** `POST /internal/render` past the bearer: drain gate → queue gate → body → fonts → the serialised render. */
+async function handleRender(request: Request, options: SidecarOptions): Promise<Response> {
   if (options.lifecycle?.draining) return drainingResponse(options.lifecycle)
+  // S-11: refuse before reading a body the engine would never see.
+  if (options.queue?.full) return busyResponse(options.queue.estimateWaitMs(), options)
 
   const body = await readRenderBody(request, options)
   if (!body.ok) return body.response
@@ -292,11 +353,24 @@ export async function handleRequest(request: Request, options: SidecarOptions): 
   const fonts = await options.fontCache.resolve(body.request.fonts)
   if (!fonts.ok) return fontsFailure(fonts)
 
-  return renderResponse(
-    body.request,
-    fonts.fonts.map((f) => ({ family: f.family, weight: f.weight, data: f.data })),
-    options
-  )
+  const render = (): Promise<Response> => {
+    // A render that waited its turn while the process began draining is not
+    // started: the drain exists to stop the heap growing (INC-13), and the
+    // caller defers on 503 exactly as it would have at arrival.
+    if (options.lifecycle?.draining) return Promise.resolve(drainingResponse(options.lifecycle))
+    return renderResponse(
+      body.request,
+      fonts.fonts.map((f) => ({ family: f.family, weight: f.weight, data: f.data })),
+      options
+    )
+  }
+  if (!options.queue) return render()
+  try {
+    return await options.queue.run(render)
+  } catch (error) {
+    if (error instanceof QueueFullError) return busyResponse(error.retryAfterMs, options)
+    throw error
+  }
 }
 
 export function startSidecar(env: Record<string, string | undefined> = process.env) {
@@ -307,19 +381,23 @@ export function startSidecar(env: Record<string, string | undefined> = process.e
   }
   // INC-13: bounded lifetime + self-heal. `server.stop()` (no force) stops the
   // listener and resolves once in-flight responses — the 503 included — have
-  // been flushed; the entrypoint sees the exit and Railway restarts the container.
+  // been flushed; the entrypoint (S-11) sees the exit and starts a fresh
+  // sidecar at once while nginx keeps serving the editor.
   const lifecycle: SidecarLifecycle = new SidecarLifecycle({
     maxRenders: options.maxRenders,
     stop: (): Promise<void> => server.stop(),
     exit: (code) => process.exit(code),
     log
   })
+  // S-11: one render at a time, a bounded queue behind it.
+  const queue = new RenderQueue({ maxWaiting: options.queueMax })
   const server = Bun.serve({
     port: options.port,
     hostname: options.host,
     maxRequestBodySize: options.maxBodyBytes,
     idleTimeout: 120,
-    fetch: (request): Promise<Response> => handleRequest(request, { ...options, log, lifecycle })
+    fetch: (request): Promise<Response> =>
+      handleRequest(request, { ...options, log, lifecycle, queue })
   })
   log({
     event: 'listening',
@@ -328,7 +406,8 @@ export function startSidecar(env: Record<string, string | undefined> = process.e
     engine: ENGINE_VERSION,
     configured: Boolean(options.secret),
     maxBodyMb: options.maxBodyBytes / MB,
-    maxRenders: options.maxRenders
+    maxRenders: options.maxRenders,
+    queueMax: options.queueMax
   })
   if (!options.secret) {
     log({

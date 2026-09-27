@@ -1,52 +1,27 @@
 // CI: render sidecar HTTP behaviour end to end — real engine, real PNG (Track E3c Part E).
 import { describe, expect, test } from 'bun:test'
 
-import { FontCache, sha256Hex } from '#studio-render/font-cache'
-import { EXIT_CODE_EXHAUSTED, SidecarLifecycle, isHeapExhaustion } from '#studio-render/lifecycle'
+import { sha256Hex } from '#studio-render/font-cache'
+import { EXIT_CODE_EXHAUSTED, isHeapExhaustion } from '#studio-render/lifecycle'
 import type { SidecarHealthBody } from '#studio-render/protocol'
 import { type SidecarOptions, handleRequest, readOptions } from '#studio-render/server'
 
-const SECRET = 'test-secret-0123456789abcdef'
+import {
+  type JSONBody,
+  SECRET,
+  bodyOf,
+  fakeLifecycle,
+  fakeReport,
+  options,
+  post,
+  settle
+} from './helpers'
+
 const FIXTURE = new URL('../../fixtures/ci/hosted-template.json', import.meta.url)
 const NOTO = new URL('../../../packages/core/assets/NotoNaskhArabic-Regular.ttf', import.meta.url)
 
-function options(overrides: Partial<SidecarOptions> = {}): SidecarOptions {
-  return {
-    secret: SECRET,
-    maxBodyBytes: 32 * 1024 * 1024,
-    fontCache: new FontCache(64 * 1024 * 1024),
-    ...overrides
-  }
-}
-
-function post(
-  body: unknown,
-  headers: Record<string, string> = { authorization: `Bearer ${SECRET}` }
-): Request {
-  return new Request('http://sidecar/internal/render', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json', ...headers },
-    body: typeof body === 'string' ? body : JSON.stringify(body)
-  })
-}
-
 async function fixtureDocument(): Promise<unknown> {
   return Bun.file(FIXTURE).json()
-}
-
-interface JSONBody {
-  ok?: boolean
-  engine?: string
-  configured?: boolean
-  canvasKit?: string
-  error?: string
-  message?: string
-  missing?: string[]
-  report?: { fontIssues?: string[]; textReadiness?: Record<string, string> }
-}
-
-async function bodyOf(res: Response): Promise<JSONBody> {
-  return (await res.json()) as JSONBody
 }
 
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47]
@@ -86,43 +61,15 @@ describe('readOptions', () => {
     expect(readOptions({ STUDIO_RENDER_MAX_RENDERS: '-3' }).maxRenders).toBe(40)
     expect(readOptions({ STUDIO_RENDER_MAX_RENDERS: 'many' }).maxRenders).toBe(40)
   })
+
+  test('STUDIO_RENDER_QUEUE_MAX defaults to 8, accepts 0, ignores junk (S-11)', () => {
+    expect(readOptions({}).queueMax).toBe(8)
+    expect(readOptions({ STUDIO_RENDER_QUEUE_MAX: '0' }).queueMax).toBe(0)
+    expect(readOptions({ STUDIO_RENDER_QUEUE_MAX: '3' }).queueMax).toBe(3)
+    expect(readOptions({ STUDIO_RENDER_QUEUE_MAX: '-1' }).queueMax).toBe(8)
+    expect(readOptions({ STUDIO_RENDER_QUEUE_MAX: 'lots' }).queueMax).toBe(8)
+  })
 })
-
-interface FakeLifecycleDeps {
-  maxRenders?: number
-  stopResolves?: boolean
-}
-
-/** A lifecycle whose `stop` / `exit` / timers are recorded instead of touching the process. */
-function fakeLifecycle({ maxRenders = 3, stopResolves = true }: FakeLifecycleDeps = {}) {
-  const calls: { stop: number; exit: number[]; timers: Array<() => void>; logs: Record<string, unknown>[] } = {
-    stop: 0,
-    exit: [],
-    timers: [],
-    logs: []
-  }
-  const lifecycle = new SidecarLifecycle({
-    maxRenders,
-    stop: () => {
-      calls.stop += 1
-      if (stopResolves) return Promise.resolve()
-      // A stop that never settles: the hard deadline must exit anyway.
-      return new Promise<void>(() => {
-        /* never resolves */
-      })
-    },
-    exit: (code) => calls.exit.push(code),
-    log: (line) => calls.logs.push(line),
-    setTimeout: (fn) => calls.timers.push(fn),
-    rssMb: () => 123
-  })
-  return { lifecycle, calls }
-}
-
-const settle = () =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, 0)
-  })
 
 describe('SidecarLifecycle', () => {
   test('recycles once the successful render count reaches the cap — stop, then exit 0', async () => {
@@ -331,18 +278,6 @@ describe('handleRequest', () => {
     expect(res.status).toBe(500)
     expect(await bodyOf(res)).toEqual({ error: 'render_failed', message: 'boom' })
   })
-})
-
-const fakeReport = (): Awaited<ReturnType<NonNullable<SidecarOptions['render']>>> => ({
-  png: new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0]),
-  width: 1,
-  height: 1,
-  frameId: 'f',
-  mode: 'direct',
-  engineVersion: '0.15.1',
-  fontIssues: [],
-  textReadiness: {},
-  timings: { canvasKitMs: 0, parseMs: 0, fontsMs: 0, renderMs: 0 }
 })
 
 describe('handleRequest — lifetime (INC-13)', () => {
