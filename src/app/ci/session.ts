@@ -412,7 +412,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       load.signal.throwIfAborted()
 
       const graph = deserializeGraph(documentToOpen(data))
-      // FB-58: a brand asset saved as an INSTANCE (templates from before the
+      // CI: FB-58 — a brand asset saved as an INSTANCE (templates from before the
       // plain-shape insertion) heals into the same plain shape on the
       // deserialised graph — before the store adopts it, so nothing is dirty
       // and nothing enters history; the next save writes the plain node.

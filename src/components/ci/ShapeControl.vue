@@ -31,30 +31,37 @@ const vocabulary = computed(
   () => hostedSession.value?.payload.value?.bindings.vocabulary ?? DEFAULT_VOCABULARY
 )
 
-/** The selected layer, re-read on every graph tick so a swap shows at once. */
-const node = computed(() => {
+/**
+ * The selected layer's facts, re-read on every graph tick so a swap shows at
+ * once. One fresh object per tick: the engine mutates a node in place, so a
+ * computed that returned the node itself would hand back the same reference
+ * after a type change and never wake its dependants.
+ */
+const view = computed(() => {
   void tick
-  const n = selectedNode.value
-  return n ? (store.graph.getNode(n.id) ?? null) : null
+  const selected = selectedNode.value
+  const node = selected ? (store.graph.getNode(selected.id) ?? null) : null
+  const binding = node ? bindingOf(node, vocabulary.value) : null
+  const shape: BrandShapeType = node?.type === 'ELLIPSE' ? 'ELLIPSE' : 'RECTANGLE'
+  return {
+    node,
+    applies: shapeControlApplies(node, vocabulary.value),
+    shape,
+    layerWords: binding ? bindingName(binding) : (node?.name ?? '')
+  }
 })
-const applies = computed(() => shapeControlApplies(node.value, vocabulary.value))
-const shape = computed<BrandShapeType>(() =>
-  node.value?.type === 'ELLIPSE' ? 'ELLIPSE' : 'RECTANGLE'
-)
-const layerWords = computed(() => {
-  const n = node.value
-  const b = n ? bindingOf(n, vocabulary.value) : null
-  return b ? bindingName(b) : (n?.name ?? '')
-})
+const applies = computed(() => view.value.applies)
+const shape = computed(() => view.value.shape)
+const layerWords = computed(() => view.value.layerWords)
 
 const options: SegmentedControlOption[] = [
   { value: 'RECTANGLE', label: SHAPE_COPY.rectangle },
   { value: 'ELLIPSE', label: SHAPE_COPY.circle }
 ]
-const ui = { root: 'w-40', item: 'px-1' }
+const ui = { root: 'w-36 shrink-0', item: 'px-1' }
 
 function pick(value: string) {
-  const n = node.value
+  const n = view.value.node
   if (!n || !isBrandShapeType(value) || value === n.type) return
   setBrandShape(store, n.id, value, vocabulary.value)
 }

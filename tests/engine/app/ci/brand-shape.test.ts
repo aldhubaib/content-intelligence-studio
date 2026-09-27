@@ -19,6 +19,8 @@ import { deserializeGraph, serializeGraph } from '@/app/ci/document'
 import { hostedInsertHandler, setHostedInsertHandler } from '@/app/ci/insert-override'
 import { createEditorStore, type EditorStore } from '@/app/editor/session'
 
+import { expectDefined, getNodeOrThrow } from '#tests/helpers/assert'
+
 const HERO: StudioBrandAsset = {
   id: 'asset-hero',
   name: 'Hero',
@@ -43,7 +45,7 @@ function publishInto(
   size = { width: 640, height: 480 }
 ) {
   const { graph: library, componentIds } = buildBrandLibraryGraph([{ asset, bytes: BYTES, size }])
-  const source = library.getNode(componentIds[0])!
+  const source = getNodeOrThrow(library, componentIds[0])
   const page = store.graph.getPages()[0]
   const component = store.graph.createNode('COMPONENT', page.id, {
     ...withoutTree(source),
@@ -122,7 +124,7 @@ describe('insertBrandShape', () => {
 
     const id = insertBrandShape(store, component.id, 100, 200, cover.id)
     expect(typeof id).toBe('string')
-    const node = store.graph.getNode(id!)!
+    const node = getNodeOrThrow(store.graph, expectDefined(id))
     expect(node.type).toBe('RECTANGLE')
     expect(node.parentId).toBe(cover.id)
     expect(node.childIds).toEqual([])
@@ -141,7 +143,7 @@ describe('insertBrandShape', () => {
     expect(node.fills).toHaveLength(1)
     expect(node.fills[0].type).toBe('IMAGE')
     expect(node.fills[0].imageScaleMode).toBe('FILL')
-    expect(store.graph.images.has(node.fills[0].imageHash!)).toBe(true)
+    expect(store.graph.images.has(expectDefined(node.fills[0]?.imageHash))).toBe(true)
     expect(pluginValue(node, 'brandAsset')).toBe(HERO.id)
     expect(pluginValue(node, 'brandAssetKind')).toBe('user-image')
     expect(pluginValue(node, 'role')).toBe('accent')
@@ -153,8 +155,8 @@ describe('insertBrandShape', () => {
   test('a logo keeps FIT and the working size the library chose', () => {
     const store = makeStore()
     const component = publishInto(store, MARK, { width: 2400, height: 1200 })
-    const id = insertBrandShape(store, component.id, 0, 0)!
-    const node = store.graph.getNode(id)!
+    const id = expectDefined(insertBrandShape(store, component.id, 0, 0))
+    const node = getNodeOrThrow(store.graph, id)
     expect(node.fills[0].imageScaleMode).toBe('FIT')
     expect({ width: node.width, height: node.height }).toEqual({ width: 480, height: 240 })
     expect(pluginValue(node, 'role')).toBe('logo')
@@ -163,9 +165,9 @@ describe('insertBrandShape', () => {
   test('resizing scales the shape itself — width and height change, nothing clips', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
-    const id = insertBrandShape(store, component.id, 0, 0)!
+    const id = expectDefined(insertBrandShape(store, component.id, 0, 0))
     store.updateNode(id, { width: 320, height: 240 })
-    const node = store.graph.getNode(id)!
+    const node = getNodeOrThrow(store.graph, id)
     expect({ width: node.width, height: node.height }).toEqual({ width: 320, height: 240 })
     expect(node.childIds).toEqual([])
   })
@@ -173,12 +175,12 @@ describe('insertBrandShape', () => {
   test('one undo entry: undo removes the shape, redo brings the same node back', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
-    const id = insertBrandShape(store, component.id, 10, 10)!
+    const id = expectDefined(insertBrandShape(store, component.id, 10, 10))
     expect(store.graph.getNode(id)).toBeDefined()
     store.undo.undo()
     expect(store.graph.getNode(id)).toBeUndefined()
     store.undo.redo()
-    const back = store.graph.getNode(id)!
+    const back = getNodeOrThrow(store.graph, id)
     expect(back.type).toBe('RECTANGLE')
     expect(back.fills[0].type).toBe('IMAGE')
     expect(back.name).toBe(brandAssetBindingName(HERO))
@@ -200,14 +202,14 @@ describe('insertBrandShape', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
     expect(hostedInsertHandler()).toBeNull()
-    const instanceId = store.createInstanceFromComponent(component.id, 0, 0)!
+    const instanceId = expectDefined(store.createInstanceFromComponent(component.id, 0, 0))
     expect(store.graph.getNode(instanceId)?.type).toBe('INSTANCE')
 
     setHostedInsertHandler((componentId, x, y, parentId) =>
       insertBrandShape(store, componentId, x, y, parentId)
     )
-    const shapeId = store.createInstanceFromComponent(component.id, 5, 6)!
-    const shape = store.graph.getNode(shapeId)!
+    const shapeId = expectDefined(store.createInstanceFromComponent(component.id, 5, 6))
+    const shape = getNodeOrThrow(store.graph, shapeId)
     expect(shape.type).toBe('RECTANGLE')
     expect({ x: shape.x, y: shape.y }).toEqual({ x: 5, y: 6 })
 
@@ -218,14 +220,14 @@ describe('insertBrandShape', () => {
       width: 80,
       height: 32
     })
-    const other = store.createInstanceFromComponent(button.id, 0, 0)!
+    const other = expectDefined(store.createInstanceFromComponent(button.id, 0, 0))
     expect(store.graph.getNode(other)?.type).toBe('INSTANCE')
   })
 
   test('brandShapeFacts reads the component: name, size, the child image fill, the three plugin keys', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
-    const facts = brandShapeFacts(store.graph, component)!
+    const facts = expectDefined(brandShapeFacts(store.graph, component))
     expect(facts.name).toBe('brand:user-image:Hero')
     expect(facts.width).toBe(640)
     expect(facts.fills[0].type).toBe('IMAGE')
@@ -248,9 +250,11 @@ describe('detachBrandInstances (heal on load)', () => {
       width: 1080,
       height: 1350
     })
-    const instanceId = store.createInstanceFromComponent(component.id, 120, 130, cover.id)!
+    const instanceId = expectDefined(
+      store.createInstanceFromComponent(component.id, 120, 130, cover.id)
+    )
     store.updateNode(instanceId, { opacity: 0.5, cornerRadius: 24 })
-    const instance = store.graph.getNode(instanceId)!
+    const instance = getNodeOrThrow(store.graph, instanceId)
     expect(instance.type).toBe('INSTANCE')
     expect(instance.childIds).toHaveLength(1)
     const document = serializeGraph(store.graph, '0.15.1')
@@ -264,7 +268,7 @@ describe('detachBrandInstances (heal on load)', () => {
 
     const report = detachBrandInstances(graph)
     expect(report).toEqual({ detached: 1, nodeIds: [instanceId] })
-    const node = graph.getNode(instanceId)!
+    const node = getNodeOrThrow(graph, instanceId)
     expect(node.type).toBe('RECTANGLE')
     expect(node.componentId).toBeNull()
     expect(node.childIds).toEqual([])
@@ -281,7 +285,7 @@ describe('detachBrandInstances (heal on load)', () => {
     expect(node.fills).toHaveLength(1)
     expect(node.fills[0].type).toBe('IMAGE')
     expect(node.fills[0].imageScaleMode).toBe('FILL')
-    expect(graph.images.has(node.fills[0].imageHash!)).toBe(true)
+    expect(graph.images.has(expectDefined(node.fills[0]?.imageHash))).toBe(true)
     expect(pluginValue(node, 'brandAsset')).toBe(HERO.id)
     expect(pluginValue(node, 'brandAssetKind')).toBe('user-image')
     // The child rectangle is gone from the graph, not orphaned.
@@ -295,7 +299,7 @@ describe('detachBrandInstances (heal on load)', () => {
     detachBrandInstances(graph)
     expect(detachBrandInstances(graph)).toEqual({ detached: 0, nodeIds: [] })
     const saved = serializeGraph(graph, '0.15.1')
-    const stored = saved.graph.nodes.find(([id]) => id === instanceId)![1]
+    const stored = saved.graph.nodes.find(([id]) => id === instanceId)?.[1]
     expect(stored.type).toBe('RECTANGLE')
     expect(stored.componentId).toBeNull()
     expect((stored.fills as Array<{ type: string }>)[0].type).toBe('IMAGE')
@@ -310,7 +314,7 @@ describe('detachBrandInstances (heal on load)', () => {
       height: 32
     })
     store.graph.createNode('RECTANGLE', button.id, { width: 80, height: 32 })
-    const instanceId = store.createInstanceFromComponent(button.id, 0, 0)!
+    const instanceId = expectDefined(store.createInstanceFromComponent(button.id, 0, 0))
     const graph = deserializeGraph(structuredClone(serializeGraph(store.graph, '0.15.1')))
     expect(detachBrandInstances(graph)).toEqual({ detached: 0, nodeIds: [] })
     expect(graph.getNode(instanceId)?.type).toBe('INSTANCE')
@@ -338,9 +342,9 @@ describe('detachBrandInstances (heal on load)', () => {
         }
       ]
     })
-    const instance = graph.createInstance(component.id, page.id, { x: 10, y: 10 })!
+    const instance = expectDefined(graph.createInstance(component.id, page.id, { x: 10, y: 10 }))
     expect(detachBrandInstances(graph).detached).toBe(1)
-    const node = graph.getNode(instance.id)!
+    const node = getNodeOrThrow(graph, instance.id)
     expect(node.type).toBe('RECTANGLE')
     expect(node.fills[0].imageScaleMode).toBe('FIT')
     expect(node.name).toBe('brand:company-logo-light')
@@ -369,7 +373,7 @@ describe('Shape — Rectangle ⇄ Circle', () => {
   test('Circle swaps the node to ELLIPSE in place — same id, name, fill, size, position, pluginData, opacity; Rectangle swaps back; one undo step each', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
-    const id = insertBrandShape(store, component.id, 30, 40)!
+    const id = expectDefined(insertBrandShape(store, component.id, 30, 40))
     store.updateNode(id, {
       opacity: 0.7,
       effects: [
@@ -382,11 +386,11 @@ describe('Shape — Rectangle ⇄ Circle', () => {
         } as never
       ]
     })
-    const before = { ...store.graph.getNode(id)! }
+    const before = { ...getNodeOrThrow(store.graph, id) }
     store.select([id])
 
     expect(setBrandShape(store, id, 'ELLIPSE')).toBe(true)
-    const circle = store.graph.getNode(id)!
+    const circle = getNodeOrThrow(store.graph, id)
     expect(circle.type).toBe('ELLIPSE')
     expect(circle.name).toBe(before.name)
     expect(circle.fills).toEqual(before.fills)
@@ -428,13 +432,13 @@ describe('Shape — Rectangle ⇄ Circle', () => {
   test('an ELLIPSE brand layer still reads as a brand binding and serialises with its IMAGE fill', () => {
     const store = makeStore()
     const component = publishInto(store, HERO)
-    const id = insertBrandShape(store, component.id, 0, 0)!
+    const id = expectDefined(insertBrandShape(store, component.id, 0, 0))
     setBrandShape(store, id, 'ELLIPSE')
     const saved = serializeGraph(store.graph, '0.15.1')
-    const stored = saved.graph.nodes.find(([nodeId]) => nodeId === id)![1]
+    const stored = saved.graph.nodes.find(([nodeId]) => nodeId === id)?.[1]
     expect(stored.type).toBe('ELLIPSE')
     expect(stored.name).toBe('brand:user-image:Hero')
     expect((stored.fills as Array<{ type: string; imageHash: string }>)[0].type).toBe('IMAGE')
-    expect(bindingOf(store.graph.getNode(id)!, DEFAULT_VOCABULARY)?.kind).toBe('brand')
+    expect(bindingOf(getNodeOrThrow(store.graph, id), DEFAULT_VOCABULARY)?.kind).toBe('brand')
   })
 })

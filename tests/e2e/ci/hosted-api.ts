@@ -4,6 +4,7 @@
 // candidates route and the app's templates page.
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { deflateSync } from 'node:zlib'
 
 import { type Page, type Route } from '@playwright/test'
 
@@ -94,12 +95,68 @@ export const CANDIDATE = {
   imageUrl: null
 }
 
+// FB-58: one brand asset the Assets panel's Brand library shows — a real PNG the
+// Studio can decode, served bearer-gated from the asset path like the app does.
+export const BRAND_ASSET_PATH = `/api/studio/templates/${TEMPLATE_ID}/assets/asset-hero`
+export const BRAND_ASSET = {
+  id: 'asset-hero',
+  name: 'Hero',
+  url: `${API}${BRAND_ASSET_PATH}`,
+  kind: 'user-image',
+  isDefault: true,
+  contentType: 'image/png'
+}
+export const BRAND_ASSET_SIZE = { width: 64, height: 48 }
+export const BRAND = {
+  workspaceName: 'Nizek',
+  colors: { primary: '#0f62fe', secondary: '#393939' },
+  assets: [BRAND_ASSET]
+}
+
+/** A solid-colour RGBA PNG built in-process (no fixture binary, no image library). */
+export function solidPNG(width: number, height: number, rgb: [number, number, number]): Buffer {
+  const crcTable = new Uint32Array(256).map((_, n) => {
+    let c = n
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    return c >>> 0
+  })
+  const crc32 = (bytes: Buffer) => {
+    let c = 0xffffffff
+    for (const b of bytes) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8)
+    return (c ^ 0xffffffff) >>> 0
+  }
+  const chunk = (type: string, data: Buffer) => {
+    const length = Buffer.alloc(4)
+    length.writeUInt32BE(data.length)
+    const typed = Buffer.concat([Buffer.from(type, 'ascii'), data])
+    const crc = Buffer.alloc(4)
+    crc.writeUInt32BE(crc32(typed))
+    return Buffer.concat([length, typed, crc])
+  }
+  const header = Buffer.alloc(13)
+  header.writeUInt32BE(width, 0)
+  header.writeUInt32BE(height, 4)
+  header[8] = 8 // bit depth
+  header[9] = 6 // RGBA
+  const row = Buffer.alloc(1 + width * 4)
+  for (let x = 0; x < width; x++) row.set([...rgb, 255], 1 + x * 4)
+  const raw = Buffer.concat(Array.from({ length: height }, () => row))
+  return Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk('IHDR', header),
+    chunk('IDAT', deflateSync(raw)),
+    chunk('IEND', Buffer.alloc(0))
+  ])
+}
+
 export interface APIOptions {
   ai?: AIBlock
   fixture?: string
   format?: typeof FORMAT
   /** Candidates the preview route answers; `null` → the route 404s (older app). */
   candidates?: Array<typeof CANDIDATE> | null
+  /** FB-58: the payload's `brand` block; default none (the library is not installed). */
+  brand?: typeof BRAND | null
 }
 
 export async function installAPI(page: Page, saves: SavedBody[], options: APIOptions = {}) {
@@ -109,6 +166,16 @@ export async function installAPI(page: Page, saves: SavedBody[], options: APIOpt
   await page.route(`${API}/**`, async (route: Route) => {
     const request = route.request()
     const url = new URL(request.url())
+    if (url.pathname === BRAND_ASSET_PATH && request.method() === 'GET') {
+      if (request.headers()['authorization'] !== 'Bearer smoke-token') {
+        return route.fulfill({ status: 401, json: { error: 'unauthorized' } })
+      }
+      return route.fulfill({
+        status: 200,
+        contentType: 'image/png',
+        body: solidPNG(BRAND_ASSET_SIZE.width, BRAND_ASSET_SIZE.height, [218, 30, 40])
+      })
+    }
     if (url.pathname === CANDIDATES_PATH && request.method() === 'GET') {
       if (request.headers()['authorization'] !== 'Bearer smoke-token') {
         return route.fulfill({ status: 401, json: { error: 'unauthorized' } })
@@ -134,7 +201,7 @@ export async function installAPI(page: Page, saves: SavedBody[], options: APIOpt
             format: options.format ?? FORMAT,
             formats: [FORMAT, CAROUSEL],
             collection: null,
-            brand: null,
+            brand: options.brand ?? null,
             fonts: [],
             bindings: {
               vocabulary: VOCABULARY,
