@@ -13,5 +13,10 @@
       "@open-pencil/scene-graph/*": ["../packages/scene-graph/src/*"]
     }
   },
-  "include": ["./**/*.ts", "../src/app/ci/document.ts", "../tests/engine/studio-render/**/*.ts"]
+  "include": [
+    "./**/*.ts",
+    "../src/app/ci/document.ts",
+    "../tests/engine/studio-render/**/*.ts",
+    "../tests/deploy/**/*.ts"
+  ]
 }

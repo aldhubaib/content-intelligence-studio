@@ -29,8 +29,8 @@
   "scripts": {
     "dev": "vite",
     "render:dev": "bun studio-render/server.ts",
-    "render:test": "bun test tests/engine/studio-render",
-    "render:check": "tsgo --noEmit -p studio-render/tsconfig.json && oxlint -c oxlint.json studio-render/ tests/engine/studio-render/",
+    "render:test": "bun test tests/engine/studio-render tests/deploy",
+    "render:check": "tsgo --noEmit -p studio-render/tsconfig.json && oxlint -c oxlint.json studio-render/ tests/engine/studio-render/ tests/deploy/",
     "dev:portless": "portless run vite",
     "build": "bun run build:packages && bun run lint && vite build",
     "preview": "vite preview",

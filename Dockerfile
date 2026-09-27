@@ -12,7 +12,10 @@
 #                  `frame-ancestors` is the Content Intelligence app origin, a
 #                  `/healthz` probe and a `/internal/` proxy to the **render sidecar**
 #                  (`studio-render/server.ts`, Bun, 127.0.0.1:8788) that runs in
-#                  the same container (Track E3c Part E).
+#                  the same container (Track E3c Part E). `deploy/entrypoint.sh`
+#                  supervises the sidecar and restarts it whenever it exits; the
+#                  container lives as long as nginx (S-11 / INC-18). `/healthz`
+#                  is the editor, `/healthz/render` the renderer.
 #
 # Railway builds this file (`railway.json`) and injects:
 #   PORT                    — listening port (Railway sets it; 8080 by default)
@@ -81,9 +84,10 @@ COPY deploy/entrypoint.sh /usr/local/bin/studio-entrypoint.sh
 RUN chmod +x /usr/local/bin/studio-entrypoint.sh
 
 EXPOSE 8080
+# The editor is the container's health (S-11): the sidecar restarts on its own and
+# is read separately at /healthz/render, so a restarting renderer never fails it.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=15s \
-  CMD wget -qO- "http://127.0.0.1:${PORT}/healthz" >/dev/null \
-   && wget -qO- "http://127.0.0.1:${STUDIO_RENDER_PORT}/healthz" >/dev/null || exit 1
+  CMD wget -qO- "http://127.0.0.1:${PORT}/healthz" >/dev/null || exit 1
 
 ENTRYPOINT ["/usr/local/bin/studio-entrypoint.sh"]
 CMD ["nginx", "-g", "daemon off;"]
