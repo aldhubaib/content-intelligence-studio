@@ -1,11 +1,16 @@
 <!-- CI: Bindings side panel for the hosted Studio (Track E3d-a, FB-44 §2 / §3; replaces the E3c Slots panel).
      Track FB-61 (PATCHES H-67): the format-aware checklist — one row per contract role, the helper
-     sentence, and one yellow line per role frame the format never renders. -->
+     sentence, and one yellow line per role frame the format never renders.
+     Track FB-69 (PATCHES H-68): the **Brand text** rows — brand:display-name / brand:handle as optional
+     text bindings, present only when the app's vocabulary lists them. -->
 <script setup lang="ts">
 import { computed } from 'vue'
 
 import {
+  BRAND_TEXT_COPY,
   bindingsStatusWords,
+  brandTextRows,
+  DEFAULT_VOCABULARY,
   ROLE_LABELS,
   ROLE_UNUSED_WORDS,
   roleStatusWords,
@@ -48,6 +53,15 @@ const strays = computed<BindingRef[]>(() => report.value?.strayBindings ?? [])
 const statusWords = computed(() => (report.value ? bindingsStatusWords(report.value.roles) : ''))
 const usable = computed(() => report.value?.usable.single ?? false)
 const carousel = computed(() => report.value?.usable.carousel ?? false)
+// Track FB-69: the kit's text names as optional bindings; an older app's vocabulary lists none → no rows.
+const brandText = computed(() =>
+  report.value
+    ? brandTextRows(
+        report.value,
+        session.value?.payload.value?.bindings.vocabulary ?? DEFAULT_VOCABULARY
+      )
+    : []
+)
 
 /** Non-blocking shape problems (duplicates, wrong layer type) — warnings, listed once. */
 const warnings = computed(() =>
@@ -249,6 +263,41 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
         </PanelItemRow>
       </li>
     </ul>
+    <!-- Track FB-69: the brand kit's text names — optional, never part of the usable verdict. -->
+    <div v-if="brandText.length > 0" class="px-2 pt-1 pb-1" data-test-id="ci-brand-text">
+      <p class="text-[11px] font-semibold text-surface">{{ BRAND_TEXT_COPY.heading }}</p>
+      <p class="text-[10px] text-muted">{{ BRAND_TEXT_COPY.lead }}</p>
+      <ul class="flex flex-col gap-0.5 pt-1" :aria-label="BRAND_TEXT_COPY.heading">
+        <li
+          v-for="row in brandText"
+          :key="row.slot"
+          class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[10px]"
+          :data-test-id="`ci-brand-text-${row.slot}`"
+          :data-present="row.layers.length > 0 ? 'true' : 'false'"
+          :title="row.description ?? row.name"
+        >
+          <code class="font-mono text-[11px] text-surface">{{ row.name }}</code>
+          <span class="flex-1" />
+          <template v-if="row.layers.length > 0">
+            <button
+              v-for="binding in row.layers"
+              :key="binding.nodeId"
+              type="button"
+              class="max-w-44 truncate rounded bg-hover/60 px-1.5 py-0.5 text-[10px] text-surface hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
+              :aria-label="`Jump to ${binding.nodeName}`"
+              :data-test-id="`ci-brand-text-jump-${row.slot}`"
+              @click="jumpTo(binding)"
+            >
+              {{ BRAND_TEXT_COPY.present(row.layers.length) }}
+            </button>
+          </template>
+          <span v-else class="text-muted" :data-test-id="`ci-brand-text-words-${row.slot}`">
+            {{ BRAND_TEXT_COPY.notAdded }}
+          </span>
+          <span v-if="row.description" class="basis-full text-muted">{{ row.description }}</span>
+        </li>
+      </ul>
+    </div>
     <div v-if="strays.length > 0" class="px-2 pt-1 pb-1.5" data-test-id="ci-bindings-strays">
       <p class="text-[10px] text-muted">Outside every role frame — never rendered:</p>
       <div class="flex flex-wrap gap-1 pt-1">

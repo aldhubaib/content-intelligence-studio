@@ -355,6 +355,49 @@ export function roleStatusWords(role: RoleReport): string {
   return `${ROLE_LABELS[role.role]} · ${words}`
 }
 
+// CI (Track FB-69, PATCHES H-68): the Bindings panel's **Brand text** rows.
+export const BRAND_TEXT_COPY = {
+  heading: 'Brand text',
+  lead: 'Optional text layers the brand kit fills — never required.',
+  notAdded: 'not added — optional',
+  /** The jump chip's words: "added" / "added 2 times" (the same name on several layers). */
+  present: (count: number) => (count === 1 ? 'added' : `added ${count} times`)
+} as const
+
+export interface BrandTextRow {
+  /** `brand:display-name` */
+  name: string
+  slot: string
+  /** The app's description of the name; null when it sent none. */
+  description: string | null
+  /** Every layer carrying the name — inside a role frame or stray. */
+  layers: BindingRef[]
+}
+
+/**
+ * One row per `vocabulary.brandText` name with the layers that carry it
+ * (role frames first, strays after) and the app's description. Empty on an
+ * older app that sends no `brandText` — the panel then shows no section.
+ */
+export function brandTextRows(
+  report: Pick<BindingsReport, 'roles' | 'strayBindings'>,
+  vocabulary: StudioBindingsVocabulary
+): BrandTextRow[] {
+  const names = vocabulary.brandText ?? []
+  if (names.length === 0) return []
+  const all = [...report.roles.flatMap((r) => r.bindings), ...report.strayBindings]
+  return names.map((slot) => {
+    const name = `${BRAND_PREFIX}${slot}`
+    const words = vocabulary.descriptions?.[name]
+    return {
+      name,
+      slot,
+      description: typeof words === 'string' && words.trim() ? words : null,
+      layers: all.filter((b) => b.binding.kind === 'brand-text' && b.binding.slot === slot)
+    }
+  })
+}
+
 function shapeProblems(
   bindings: readonly BindingRef[],
   vocabulary: StudioBindingsVocabulary

@@ -10,6 +10,8 @@ import {
   bindingOf,
   bindingsReport,
   bindingsStatusWords,
+  BRAND_TEXT_COPY,
+  brandTextRows,
   contractRoles,
   DEFAULT_VOCABULARY,
   listBindings,
@@ -319,6 +321,30 @@ describe('bindingsReport', () => {
     expect(bindingsStatusWords(alone.roles)).toBe(
       'Not usable yet — cover has no content:title or content:body'
     )
+  })
+
+  test('Track FB-69: brandTextRows lists one row per kit name with its layers (role frames, then strays) and description; none on an older app', () => {
+    const graph = graphWith((g, page) => {
+      const cover = g.createNode('FRAME', page, { name: 'cover', width: 1080, height: 1350 })
+      g.createNode('TEXT', cover.id, { name: 'content:title' })
+      g.createNode('TEXT', cover.id, { name: 'brand:handle' })
+      g.createNode('TEXT', page, { name: 'Brand:Handle' })
+    })
+    const vocabulary = {
+      ...DEFAULT_VOCABULARY,
+      descriptions: { 'brand:handle': "the brand kit's handle as @handle" }
+    }
+    const rows = brandTextRows(bindingsReport(graph, vocabulary, FORMAT), vocabulary)
+    expect(rows.map((r) => [r.name, r.slot, r.description, r.layers.length])).toEqual([
+      ['brand:display-name', 'display-name', null, 0],
+      ['brand:handle', 'handle', "the brand kit's handle as @handle", 2]
+    ])
+    expect(rows[1]?.layers.map((l) => l.frameId !== null)).toEqual([true, false])
+    expect(BRAND_TEXT_COPY.present(1)).toBe('added')
+    expect(BRAND_TEXT_COPY.present(2)).toBe('added 2 times')
+
+    const older = { ...DEFAULT_VOCABULARY, brandText: undefined }
+    expect(brandTextRows(bindingsReport(graph, older, FORMAT), older)).toEqual([])
   })
 })
 
