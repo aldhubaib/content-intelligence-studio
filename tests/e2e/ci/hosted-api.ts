@@ -54,6 +54,8 @@ export const VOCABULARY = {
   contentImage: ['image'],
   reserved: ['ai-image'],
   brandKinds: ['user-image', 'company-logo-light', 'company-logo-dark'],
+  // Track FB-69: the brand kit's TEXT names — `src/server/studio/payload.ts` on the app.
+  brandText: ['display-name', 'handle'],
   roles: ['cover', 'repeat', 'ending'],
   legacy: {
     headline: 'title',
@@ -76,11 +78,20 @@ export const VOCABULARY = {
     'brand:company-logo-light': 'light logo, for dark backgrounds',
     'brand:company-logo-dark': 'dark logo, for light backgrounds',
     'brand:<kind>:<asset name>': 'a named asset instead of the default',
+    'brand:display-name': "the brand kit's display name (text; empty when the kit has none)",
+    'brand:handle': "the brand kit's handle as @handle (text; empty when the kit has none)",
     cover: 'required, the first / only image',
     repeat: 'one per body chunk on carousel formats',
     ending: 'optional last slide with the CTA'
   }
 }
+
+/** Track FB-69: an app before H-68 — no brand text names, no descriptions for them. */
+export const VOCABULARY_OLDER = (() => {
+  const { brandText: _brandText, descriptions, ...rest } = VOCABULARY
+  const { 'brand:display-name': _dn, 'brand:handle': _h, ...olderDescriptions } = descriptions
+  return { ...rest, descriptions: olderDescriptions }
+})()
 
 export type AIBlock = {
   enabled: boolean
@@ -124,10 +135,13 @@ export const BRAND_ASSET = {
   contentType: 'image/png'
 }
 export const BRAND_ASSET_SIZE = { width: 64, height: 48 }
+/** Track FB-69: the kit's text as the app sends it — the handle carries its `@`. */
+export const BRAND_TEXT = { 'display-name': 'Nizek', handle: '@nizek' }
 export const BRAND = {
   workspaceName: 'Nizek',
   colors: { primary: '#0f62fe', secondary: '#393939' },
-  assets: [BRAND_ASSET]
+  assets: [BRAND_ASSET],
+  text: BRAND_TEXT
 }
 
 /** A solid-colour RGBA PNG built in-process (no fixture binary, no image library). */
@@ -172,8 +186,10 @@ export interface APIOptions {
   format?: typeof FORMAT
   /** Candidates the preview route answers; `null` → the route 404s (older app). */
   candidates?: Array<typeof CANDIDATE> | null
-  /** FB-58: the payload's `brand` block; default none (the library is not installed). */
-  brand?: typeof BRAND | null
+  /** FB-58: the payload's `brand` block; default none (the library is not installed). Track FB-69: `text` may be absent. */
+  brand?: (Omit<typeof BRAND, 'text'> & { text?: typeof BRAND_TEXT }) | null
+  /** Track FB-69: the vocabulary the payload carries; `VOCABULARY_OLDER` plays an app before H-68. */
+  vocabulary?: typeof VOCABULARY | typeof VOCABULARY_OLDER
   /**
    * Track FB-61: the payload's `contract` block. Default → derived from `format.slideCap` the
    * way the app does; `null` → absent (an older app), the Studio derives its own.
@@ -258,7 +274,7 @@ function templatePayload(options: APIOptions, ai: AIBlock, name: string, version
     brand: options.brand ?? null,
     fonts: [],
     bindings: {
-      vocabulary: VOCABULARY,
+      vocabulary: options.vocabulary ?? VOCABULARY,
       report: {
         version: 'bindings-v3',
         usable: { single: true, carousel: false },

@@ -8,13 +8,20 @@ import { CanvasHelper } from '#tests/helpers/canvas'
 
 import {
   API,
+  BRAND,
+  BRAND_TEXT,
   CANDIDATE,
   FRAME_ID,
   SAMPLE_TEXT,
   TEMPLATE_ID,
+  VOCABULARY_OLDER,
   installAPI,
   type SavedBody
 } from './hosted-api'
+
+/** Track FB-69: the two brand text layers of `tests/fixtures/ci/hosted-template-brand-text.json`. */
+const DISPLAY_NAME_ID = '0:6'
+const HANDLE_ID = '0:7'
 
 test.describe('hosted mode — preview with real content', () => {
   test('E3d-b1 (FB-44 §6): Preview with ▾ paints a candidate, is not an edit, never saves, and reopens clean', async ({
@@ -139,5 +146,92 @@ test.describe('hosted mode — preview with real content', () => {
     await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v3')
     // The 404 itself is logged by the browser as a resource error — expected here, so
     // `assertNoErrors` is not asserted for this scenario.
+  })
+
+  test('Track FB-69 (H-68): brand:display-name / brand:handle show the kit’s text on open — never an edit, never saved; selection lifts', async ({
+    page
+  }) => {
+    const saves: SavedBody[] = []
+    await installAPI(page, saves, { fixture: 'hosted-template-brand-text', brand: BRAND })
+    const canvas = new CanvasHelper(page)
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await expect(page.getByTestId('ci-bindings-status')).toHaveText('All changes saved.')
+    const textOf = (id: string) =>
+      page.evaluate(
+        (nodeId) => window.openPencil?.getStore?.()?.graph.getNode(nodeId)?.text ?? null,
+        id
+      )
+
+    // Painted from the payload with no preview selection — the kit is not a choice.
+    await expect.poll(() => textOf(DISPLAY_NAME_ID)).toBe(BRAND_TEXT['display-name'])
+    await expect.poll(() => textOf(HANDLE_ID)).toBe(BRAND_TEXT.handle)
+    // The content layer keeps its placeholder until a preview is picked.
+    expect(await textOf('0:5')).toBe('عنوان تجريبي')
+    await expect(page.getByTestId('ci-preview-menu')).toHaveAttribute('data-selection', 'none')
+    // Not an edit.
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v3')
+    expect(await page.evaluate(() => window.openPencil?.getStore?.()?.undo.canUndo ?? null)).toBe(
+      false
+    )
+
+    // The Bindings panel lists the two names as optional, present bindings.
+    const brandText = page.getByTestId('ci-brand-text')
+    await expect(brandText).toBeVisible()
+    await expect(brandText).toContainText('Brand text')
+    await expect(page.getByTestId('ci-brand-text-display-name')).toHaveAttribute(
+      'data-present',
+      'true'
+    )
+    await expect(page.getByTestId('ci-brand-text-jump-handle')).toHaveText('added')
+    await expect(page.getByTestId('ci-bindings-usable')).toHaveAttribute('data-usable', 'true')
+
+    // Selecting the layer shows its own words; deselecting brings the kit's text back.
+    await page.evaluate((id) => window.openPencil?.getStore?.()?.select([id]), DISPLAY_NAME_ID)
+    await expect.poll(() => textOf(DISPLAY_NAME_ID)).toBe('Your name')
+    await page.evaluate(() => window.openPencil?.getStore?.()?.select([]))
+    await expect.poll(() => textOf(DISPLAY_NAME_ID)).toBe(BRAND_TEXT['display-name'])
+    await canvas.waitForRender()
+    await page.screenshot({ path: test.info().outputPath('hosted-preview-brand-text.png') })
+
+    // A real edit + Save version: the PUT carries the placeholders, never the kit's text.
+    await page.evaluate((frameId) => {
+      window.openPencil?.getStore?.()?.updateNode(frameId, { x: 40 })
+    }, FRAME_ID)
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Unsaved changes')
+    await page.getByTestId('canvas-element').focus()
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => saves.length).toBe(1)
+    const sent = JSON.stringify(saves[0].document)
+    expect(sent).toContain('Your name')
+    expect(sent).toContain('@yourhandle')
+    expect(sent).not.toContain(BRAND_TEXT['display-name'])
+    expect(sent).not.toContain(BRAND_TEXT.handle)
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v4')
+    expect(await textOf(HANDLE_ID)).toBe(BRAND_TEXT.handle)
+    canvas.assertNoErrors()
+  })
+
+  test('Track FB-69: without brand.text (an older app) the layers keep their own words', async ({
+    page
+  }) => {
+    const { text: _text, ...brandWithoutText } = BRAND
+    await installAPI(page, [], {
+      fixture: 'hosted-template-brand-text',
+      brand: brandWithoutText,
+      vocabulary: VOCABULARY_OLDER
+    })
+    const canvas = new CanvasHelper(page)
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await expect(page.getByTestId('ci-bindings-status')).toHaveText('All changes saved.')
+    expect(
+      await page.evaluate(
+        (id) => window.openPencil?.getStore?.()?.graph.getNode(id)?.text ?? null,
+        DISPLAY_NAME_ID
+      )
+    ).toBe('Your name')
+    await expect(page.getByTestId('ci-brand-text')).toHaveCount(0)
+    canvas.assertNoErrors()
   })
 })
