@@ -92,6 +92,14 @@ function slug(row: NameRow): string {
       >
         {{ group.heading }}
       </h3>
+      <!-- Track FB-69: the Brand text group carries one sentence under its heading. -->
+      <p
+        v-if="group.lead"
+        class="px-3 pb-1 text-[11px] text-muted"
+        :data-test-id="`ci-names-group-lead-${group.key}`"
+      >
+        {{ group.lead }}
+      </p>
       <div
         class="hidden grid-cols-[minmax(0,11rem)_minmax(0,1fr)] gap-x-2 px-3 pb-1 text-[10px] text-muted @[22rem]:grid"
         aria-hidden="true"

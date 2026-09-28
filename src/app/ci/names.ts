@@ -26,7 +26,10 @@ export const NAMES_COPY = {
   /** The tab. */
   tab: 'Names',
   lead: 'Name a layer exactly like this and the system fills it.',
-  groups: { content: 'Content', brand: 'Brand', frames: 'Frames' },
+  // CI (Track FB-69, H-68): the fourth group — the brand kit's TEXT names.
+  groups: { content: 'Content', brand: 'Brand', brandText: 'Brand text', frames: 'Frames' },
+  /** Track FB-69: the sentence under the **Brand text** heading. */
+  brandTextLead: 'Text layers the brand kit fills — optional, and empty when the kit has no value.',
   columns: { name: 'Layer name', description: 'What the system writes into it' },
   copied: 'Copied',
   copyFailed: 'Could not copy — select the name and copy it yourself.',
@@ -48,7 +51,13 @@ export const NAMES_STATUS_MS = 1500
  */
 export const BRAND_NAMED_ASSET_ROW = `${BRAND_PREFIX}<kind>:<asset name>`
 
-export type NameRowKind = 'content' | 'brand' | 'brand-placeholder' | 'brand-asset' | 'role'
+export type NameRowKind =
+  | 'content'
+  | 'brand'
+  | 'brand-placeholder'
+  | 'brand-asset'
+  | 'brand-text'
+  | 'role'
 
 export interface NameRow {
   /** The exact layer name — what a click copies. */
@@ -62,11 +71,13 @@ export interface NameRow {
   renamable: boolean
 }
 
-export type NameGroupKey = 'content' | 'brand' | 'frames'
+export type NameGroupKey = 'content' | 'brand' | 'brand-text' | 'frames'
 
 export interface NameGroup {
   key: NameGroupKey
   heading: string
+  /** Track FB-69: an optional sentence under the heading (only **Brand text** has one). */
+  lead?: string
   rows: NameRow[]
 }
 
@@ -85,15 +96,17 @@ function row(
 }
 
 /**
- * The tab's three groups in the fixed order the app's vocabulary lists them:
+ * The tab's groups in the fixed order the app's vocabulary lists them:
  * Content = text slots → image slots → reserved; Brand = kinds → the
  * `brand:<kind>:<asset name>` placeholder → one sub-row per workspace asset in
- * gallery order; Frames = the roles.
+ * gallery order; **Brand text** (Track FB-69) = one row per `brandText` name,
+ * present only when the app sends the list; Frames = the roles.
  */
 export function namesGroups(
   vocabulary: StudioBindingsVocabulary,
   assets: ReadonlyArray<StudioBrandAsset> = []
 ): NameGroup[] {
+  const groups: NameGroup[] = []
   const d = vocabulary.descriptions
   const content = [...vocabulary.contentText, ...vocabulary.contentImage, ...vocabulary.reserved]
     .map((slot) => `${CONTENT_PREFIX}${slot}`)
@@ -112,12 +125,25 @@ export function namesGroups(
       row(brandAssetBindingName(asset), 'brand-asset', brandAssetDescription(asset), { sub: true })
     )
   }
-  const frames = vocabulary.roles.map((role) => row(role, 'role', describe(d, role)))
-  return [
+  groups.push(
     { key: 'content', heading: NAMES_COPY.groups.content, rows: content },
-    { key: 'brand', heading: NAMES_COPY.groups.brand, rows: brand },
-    { key: 'frames', heading: NAMES_COPY.groups.frames, rows: frames }
-  ]
+    { key: 'brand', heading: NAMES_COPY.groups.brand, rows: brand }
+  )
+  // CI (Track FB-69, H-68): the brand kit's text names, after the asset kinds; an older app sends none → no group.
+  const brandText = (vocabulary.brandText ?? [])
+    .map((slot) => `${BRAND_PREFIX}${slot}`)
+    .map((name) => row(name, 'brand-text', describe(d, name)))
+  if (brandText.length > 0) {
+    groups.push({
+      key: 'brand-text',
+      heading: NAMES_COPY.groups.brandText,
+      lead: NAMES_COPY.brandTextLead,
+      rows: brandText
+    })
+  }
+  const frames = vocabulary.roles.map((role) => row(role, 'role', describe(d, role)))
+  groups.push({ key: 'frames', heading: NAMES_COPY.groups.frames, rows: frames })
+  return groups
 }
 
 /** The pieces of the browser `copyText` touches — injectable so a unit test needs no DOM. */

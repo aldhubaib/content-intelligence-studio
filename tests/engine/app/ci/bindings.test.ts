@@ -10,6 +10,8 @@ import {
   bindingOf,
   bindingsReport,
   bindingsStatusWords,
+  BRAND_TEXT_COPY,
+  brandTextRows,
   contractRoles,
   DEFAULT_VOCABULARY,
   listBindings,
@@ -80,6 +82,29 @@ describe('parseBindingName', () => {
     expect(parseBindingName('content:banana', DEFAULT_VOCABULARY)).toBeNull()
     expect(parseBindingName('brand:mystery', DEFAULT_VOCABULARY)).toBeNull()
     expect(parseBindingName('Headline', DEFAULT_VOCABULARY)).toBeNull()
+  })
+
+  test('Track FB-69: brand:display-name / brand:handle are text bindings without a gallery name; an older app has none', () => {
+    expect(parseBindingName('brand:display-name', DEFAULT_VOCABULARY)).toEqual({
+      kind: 'brand-text',
+      slot: 'display-name'
+    })
+    expect(parseBindingName('Brand:Handle ', DEFAULT_VOCABULARY)).toEqual({
+      kind: 'brand-text',
+      slot: 'handle'
+    })
+    expect(bindingName({ kind: 'brand-text', slot: 'handle' })).toBe('brand:handle')
+    // The app's rule: a `:<name>` suffix makes it no binding at all — never a gallery.
+    expect(parseBindingName('brand:handle:x', DEFAULT_VOCABULARY)).toBeNull()
+    expect(parseBindingName('brand:display-name:Nizek', DEFAULT_VOCABULARY)).toBeNull()
+    // An older app's vocabulary lists no brand text — the names are plain layers there.
+    const older = { ...DEFAULT_VOCABULARY, brandText: undefined }
+    expect(parseBindingName('brand:display-name', older)).toBeNull()
+    expect(parseBindingName('brand:user-image', older)).toEqual({
+      kind: 'brand',
+      slotKind: 'user-image',
+      name: null
+    })
   })
 
   test('the layer name is authoritative; the plugin slot value is only a fallback', () => {
@@ -250,6 +275,76 @@ describe('bindingsReport', () => {
       expect.arrayContaining(['duplicate_binding', 'text_on_shape', 'image_on_text'])
     )
     expect(report.strayBindings.map((b) => b.name)).toEqual(['content:cta'])
+  })
+
+  test('Track FB-69: brand text layers are optional text bindings — listed, never required, judged as text', () => {
+    const report = bindingsReport(
+      graphWith((g, page) => {
+        const cover = g.createNode('FRAME', page, {
+          name: 'cover',
+          width: 1080,
+          height: 1350
+        })
+        g.createNode('TEXT', cover.id, { name: 'content:body' })
+        g.createNode('TEXT', cover.id, { name: 'brand:display-name' })
+        g.createNode('RECTANGLE', cover.id, { name: 'Brand:Handle' })
+      }),
+      DEFAULT_VOCABULARY,
+      FORMAT
+    )
+    const cover = report.roles.find((r) => r.role === 'cover')
+    expect(cover?.status).toBe('ok')
+    expect(report.usable.single).toBe(true)
+    expect(cover?.bindings.map((b) => b.name)).toEqual([
+      'content:body',
+      'brand:display-name',
+      'brand:handle'
+    ])
+    // A handle on a shape is a warning like text on a shape — never a gate.
+    expect(cover?.reasons.map((r) => r.code)).toEqual(['text_on_shape'])
+
+    // A cover with only the two brand names still lacks a content text.
+    const alone = bindingsReport(
+      graphWith((g, page) => {
+        const cover = g.createNode('FRAME', page, {
+          name: 'cover',
+          width: 1080,
+          height: 1350
+        })
+        g.createNode('TEXT', cover.id, { name: 'brand:display-name' })
+        g.createNode('TEXT', cover.id, { name: 'brand:handle' })
+      }),
+      DEFAULT_VOCABULARY,
+      FORMAT
+    )
+    expect(alone.usable.single).toBe(false)
+    expect(bindingsStatusWords(alone.roles)).toBe(
+      'Not usable yet — cover has no content:title or content:body'
+    )
+  })
+
+  test('Track FB-69: brandTextRows lists one row per kit name with its layers (role frames, then strays) and description; none on an older app', () => {
+    const graph = graphWith((g, page) => {
+      const cover = g.createNode('FRAME', page, { name: 'cover', width: 1080, height: 1350 })
+      g.createNode('TEXT', cover.id, { name: 'content:title' })
+      g.createNode('TEXT', cover.id, { name: 'brand:handle' })
+      g.createNode('TEXT', page, { name: 'Brand:Handle' })
+    })
+    const vocabulary = {
+      ...DEFAULT_VOCABULARY,
+      descriptions: { 'brand:handle': "the brand kit's handle as @handle" }
+    }
+    const rows = brandTextRows(bindingsReport(graph, vocabulary, FORMAT), vocabulary)
+    expect(rows.map((r) => [r.name, r.slot, r.description, r.layers.length])).toEqual([
+      ['brand:display-name', 'display-name', null, 0],
+      ['brand:handle', 'handle', "the brand kit's handle as @handle", 2]
+    ])
+    expect(rows[1]?.layers.map((l) => l.frameId !== null)).toEqual([true, false])
+    expect(BRAND_TEXT_COPY.present(1)).toBe('added')
+    expect(BRAND_TEXT_COPY.present(2)).toBe('added 2 times')
+
+    const older = { ...DEFAULT_VOCABULARY, brandText: undefined }
+    expect(brandTextRows(bindingsReport(graph, older, FORMAT), older)).toEqual([])
   })
 })
 

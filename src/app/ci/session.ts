@@ -60,6 +60,7 @@ import { installHostedFonts, type HostedFontReport } from './fonts'
 import { hostedToken, scrubTokenFromLocation, type HostedConfig } from './hosted'
 import { PREVIEW_COPY } from './preview'
 import { createSessionPreview, type SessionPreview } from './preview-candidates'
+import type { LockedTextKind } from './preview-overlay'
 import {
   createHostBridge,
   type HostBridge,
@@ -262,17 +263,19 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   const disposers_early: Array<() => void> = []
   // Track E3d-c: in design mode the overlay is the post's FIXED content — locked text, the output's user image.
   let lastHintAt = 0
+  // Track FB-69 (H-68): the post's text and the brand kit's text each have their own sentence.
+  const lockedHint = (kind: LockedTextKind) => {
+    const now = Date.now()
+    if (now - lastHintAt < 1500) return
+    lastHintAt = now
+    hint(kind === 'brand-text' ? PREVIEW_COPY.brandLockedHint : PREVIEW_COPY.designLockedHint)
+  }
   const preview = createSessionPreview(store, api, {
     vocabulary: () => vocabulary.value,
     payload: () => payload.value,
     onUnauthorized: () => bridge.post({ type: 'studio:token-expiring' }),
     lockContentText: () => isDesign,
-    onLockedEdit: () => {
-      const now = Date.now()
-      if (now - lastHintAt < 1500) return
-      lastHintAt = now
-      hint(PREVIEW_COPY.designLockedHint)
-    },
+    onLockedEdit: (_id, kind) => lockedHint(kind),
     preferredBrandAsset: (kind) =>
       kind === 'user-image' ? (design.value?.userImageAssetId ?? null) : null
   })
@@ -282,12 +285,10 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       watch(
         () => store.state.editingTextId,
         (id) => {
-          if (!id || !preview.overlay.isLocked(id)) return
+          const kind = id ? preview.overlay.lockedKind(id) : null
+          if (!kind) return
           store.commitTextEdit()
-          const now = Date.now()
-          if (now - lastHintAt < 1500) return
-          lastHintAt = now
-          hint(PREVIEW_COPY.designLockedHint)
+          lockedHint(kind)
         },
         { flush: 'sync' }
       )

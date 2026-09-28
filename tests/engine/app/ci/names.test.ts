@@ -16,8 +16,11 @@ import { createEditorStore, type EditorStore } from '@/app/editor/session'
 
 import { expectDefined, getNodeOrThrow } from '#tests/helpers/assert'
 
+// Track FB-69: an app before H-68 lists no brand text — the tab shows three groups there.
+const OLDER: StudioBindingsVocabulary = { ...DEFAULT_VOCABULARY, brandText: undefined }
+
 const DESCRIBED: StudioBindingsVocabulary = {
-  ...DEFAULT_VOCABULARY,
+  ...OLDER,
   descriptions: {
     'content:title': 'the hook / title',
     'content:subtitle': 'subtitle (demand name or topic)',
@@ -30,6 +33,8 @@ const DESCRIBED: StudioBindingsVocabulary = {
     'brand:company-logo-light': 'light logo, for dark backgrounds',
     'brand:company-logo-dark': 'dark logo, for light backgrounds',
     'brand:<kind>:<asset name>': 'a named asset instead of the default',
+    'brand:display-name': "the brand kit's display name (text; empty when the kit has none)",
+    'brand:handle': "the brand kit's handle as @handle (text; empty when the kit has none)",
     cover: 'required, the first / only image',
     repeat: 'one per body chunk on carousel formats',
     ending: 'optional last slide with the CTA'
@@ -116,7 +121,7 @@ describe('namesGroups', () => {
     expect(kicker?.description).toBeNull()
     expect(content.rows.find((r) => r.name === 'content:body')?.description).toBeNull()
 
-    const old = namesGroups(DEFAULT_VOCABULARY)
+    const old = namesGroups(OLDER)
     expect(old.flatMap((g) => g.rows).every((r) => r.description === null)).toBe(true)
     expect(old.flatMap((g) => g.rows).map((r) => r.name)).toContain('cover')
   })
@@ -133,6 +138,47 @@ describe('namesGroups', () => {
     expect(content?.rows.at(-1)?.name).toBe('content:ai-video')
     expect(brand?.rows.map((r) => r.name)).toContain('brand:pattern')
     expect(frames?.rows.at(-1)).toMatchObject({ name: 'closing', description: 'last' })
+  })
+
+  test('Track FB-69: a Brand text group after Brand when the app lists brandText — one row per name, its description, renamable; none on an older app', () => {
+    const groups = namesGroups({ ...DESCRIBED, brandText: ['display-name', 'handle'] }, [HERO])
+    expect(groups.map((g) => [g.key, g.heading])).toEqual([
+      ['content', 'Content'],
+      ['brand', 'Brand'],
+      ['brand-text', 'Brand text'],
+      ['frames', 'Frames']
+    ])
+    const group = expectDefined(groups[2])
+    expect(group.lead).toBe(NAMES_COPY.brandTextLead)
+    expect(group.rows.map((r) => [r.name, r.kind, r.sub, r.renamable, r.description])).toEqual([
+      [
+        'brand:display-name',
+        'brand-text',
+        false,
+        true,
+        "the brand kit's display name (text; empty when the kit has none)"
+      ],
+      [
+        'brand:handle',
+        'brand-text',
+        false,
+        true,
+        "the brand kit's handle as @handle (text; empty when the kit has none)"
+      ]
+    ])
+    // The asset sub-rows stay under Brand, not under Brand text.
+    expect(expectDefined(groups[1]).rows.at(-1)?.name).toBe('brand:user-image:Hero')
+
+    // The other groups have no lead sentence.
+    expect(groups.filter((g) => g.lead).map((g) => g.key)).toEqual(['brand-text'])
+
+    // An empty list reads like an absent one.
+    expect(namesGroups({ ...DESCRIBED, brandText: [] }).map((g) => g.key)).toEqual([
+      'content',
+      'brand',
+      'frames'
+    ])
+    expect(namesGroups(OLDER).map((g) => g.key)).toEqual(['content', 'brand', 'frames'])
   })
 })
 

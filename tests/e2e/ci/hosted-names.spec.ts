@@ -6,7 +6,16 @@ import { expect, test } from '@playwright/test'
 
 import { CanvasHelper } from '#tests/helpers/canvas'
 
-import { API, BRAND, BRAND_ASSET, TEMPLATE_ID, VOCABULARY, installAPI, type SavedBody } from './hosted-api'
+import {
+  API,
+  BRAND,
+  BRAND_ASSET,
+  TEMPLATE_ID,
+  VOCABULARY,
+  VOCABULARY_OLDER,
+  installAPI,
+  type SavedBody
+} from './hosted-api'
 
 /** The fixture's `content:title` text layer inside the `cover` frame. */
 const TITLE_ID = '0:5'
@@ -18,6 +27,8 @@ const EXPECTED_ROWS = [
   ...VOCABULARY.brandKinds.map((k) => `brand:${k}`),
   'brand:<kind>:<asset name>',
   `brand:${BRAND_ASSET.kind}:${BRAND_ASSET.name}`,
+  // Track FB-69: the Brand text group after the asset rows.
+  ...VOCABULARY.brandText.map((s) => `brand:${s}`),
   ...VOCABULARY.roles
 ]
 
@@ -43,13 +54,32 @@ test.describe('hosted mode — Names tab (FB-65)', () => {
     await expect(panel.getByTestId('ci-names-lead')).toHaveText(
       'Name a layer exactly like this and the system fills it.'
     )
-    await expect(panel.getByRole('heading', { level: 3 })).toHaveText(['Content', 'Brand', 'Frames'])
+    await expect(panel.getByRole('heading', { level: 3 })).toHaveText([
+      'Content',
+      'Brand',
+      'Brand text',
+      'Frames'
+    ])
 
     // Every row in the payload's order, each with the payload's sentence.
     const names = panel.locator('li[data-kind] code')
     await expect(names).toHaveText(EXPECTED_ROWS)
     await expect(panel.getByTestId('ci-name-row-content-body')).toContainText(
       'the body text; on a carousel the chunk for that slide'
+    )
+    // Track FB-69: the Brand text group — its lead sentence and the two described rows.
+    await expect(panel.getByTestId('ci-names-group-lead-brand-text')).toHaveText(
+      'Text layers the brand kit fills — optional, and empty when the kit has no value.'
+    )
+    await expect(panel.getByTestId('ci-name-row-brand-display-name')).toContainText(
+      "the brand kit's display name (text; empty when the kit has none)"
+    )
+    await expect(panel.getByTestId('ci-name-row-brand-handle')).toContainText(
+      "the brand kit's handle as @handle (text; empty when the kit has none)"
+    )
+    await expect(panel.getByTestId('ci-name-row-brand-handle')).toHaveAttribute(
+      'data-kind',
+      'brand-text'
     )
     await expect(panel.getByTestId('ci-name-row-brand-kind-asset-name')).toContainText(
       'a named asset instead of the default'
@@ -93,12 +123,17 @@ test.describe('hosted mode — Names tab (FB-65)', () => {
     await expect(
       panel.getByTestId('ci-name-row-brand-user-image-hero').getByRole('button')
     ).toHaveCount(2)
+    // Track FB-69: a brand text row renames like every other row.
+    await expect(panel.getByTestId('ci-name-row-brand-handle').getByRole('button')).toHaveCount(2)
     await panel.getByRole('button', { name: 'Rename selected layer to content:subtitle' }).click()
     await expect(panel.getByTestId('ci-name-status-content-subtitle')).toHaveText(
       'Renamed to content:subtitle'
     )
     const layerName = () =>
-      page.evaluate((id) => window.openPencil?.getStore?.()?.graph.getNode(id)?.name ?? null, TITLE_ID)
+      page.evaluate(
+        (id) => window.openPencil?.getStore?.()?.graph.getNode(id)?.name ?? null,
+        TITLE_ID
+      )
     expect(await layerName()).toBe('content:subtitle')
     // The Bindings report follows: the cover lost its title → not usable.
     await expect(page.getByTestId('ci-bindings-usable')).toHaveAttribute('data-usable', 'false')
@@ -115,5 +150,25 @@ test.describe('hosted mode — Names tab (FB-65)', () => {
     await expect(panel.getByRole('button', { name: /^Rename selected layer/ })).toHaveCount(0)
     await expect(copyTitle).toBeVisible()
     await page.screenshot({ path: test.info().outputPath('hosted-names-tab.png') })
+  })
+
+  test('Track FB-69: an older app without brandText shows three groups and no Brand text rows', async ({
+    page
+  }) => {
+    const saves: SavedBody[] = []
+    await installAPI(page, saves, { brand: BRAND, vocabulary: VOCABULARY_OLDER })
+    const canvas = new CanvasHelper(page)
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await expect(page.getByTestId('ci-bindings-status')).toHaveText('All changes saved.')
+    await page.getByTestId('properties-tab-names').click()
+    const panel = page.getByTestId('ci-names-panel')
+    await expect(panel.getByRole('heading', { level: 3 })).toHaveText([
+      'Content',
+      'Brand',
+      'Frames'
+    ])
+    await expect(panel.locator('li[data-kind="brand-text"]')).toHaveCount(0)
+    await expect(page.getByTestId('ci-brand-text')).toHaveCount(0)
   })
 })
