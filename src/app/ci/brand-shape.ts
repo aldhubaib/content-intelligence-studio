@@ -266,6 +266,8 @@ export function shapeControlApplies(
   const binding = bindingOf(node, vocabulary)
   if (!binding) return false
   if (binding.kind === 'brand') return true
+  // CI (Track FB-69): `brand:display-name` / `brand:handle` are text layers — no shape.
+  if (binding.kind === 'brand-text') return false
   return !isContentTextSlot(vocabulary, binding.slot)
 }
 

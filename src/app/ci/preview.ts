@@ -36,6 +36,10 @@ export const PREVIEW_COPY = {
   designFixed: 'Content from the post',
   designFixedSr: 'The post’s text fills the content layers; it is not part of the design document',
   designLockedHint: 'Text comes from the post — edit the draft on Plan.',
+  /** Track FB-69 (H-68, design mode): a `brand:display-name` / `brand:handle` layer is the kit's, not the design's. */
+  brandLockedHint: 'This text comes from the brand kit — edit it on Settings › Brand kit.',
+  /** Track FB-69: the inspector section label over a selected brand text layer in design mode. */
+  brandFixed: 'Text from the brand kit',
   brandEmpty: {
     'user-image': 'No user image yet — add one in Settings › Brand kit.',
     'company-logo-light': 'No light logo yet — add one in Settings › Brand kit.',
@@ -159,6 +163,19 @@ export function contentPreviewChanges(
     const chunk = content.bodyChunks?.[0]?.trim()
     text = chunk ? chunk : truncateWithEllipsis(text, estimateBoxChars(node, options.maxChars))
   }
+  return textPreviewChanges(node, text)
+}
+
+/**
+ * The preview changes that put `text` on ONE text layer: `text` plus the style
+ * runs remapped to the new length; the font and the box stay. An empty string
+ * is a value too (Track FB-69: a kit without a handle paints an empty layer,
+ * never the placeholder) — the runs collapse to none.
+ */
+export function textPreviewChanges(
+  node: Pick<SceneNode, 'text' | 'styleRuns'>,
+  text: string
+): Partial<SceneNode> {
   const current = typeof node.text === 'string' ? node.text : ''
   const changes: Partial<SceneNode> = { text }
   if (Array.isArray(node.styleRuns) && node.styleRuns.length > 0) {

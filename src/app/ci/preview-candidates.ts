@@ -20,7 +20,7 @@ import {
   type StudioPreviewCandidate
 } from './api'
 import { preselectedCandidate } from './preview'
-import { createPreviewOverlay, type PreviewOverlay } from './preview-overlay'
+import { createPreviewOverlay, type LockedTextKind, type PreviewOverlay } from './preview-overlay'
 
 export type PreviewCandidatesState =
   | { kind: 'idle' }
@@ -88,7 +88,7 @@ export interface SessionPreviewOptions {
   onUnauthorized: () => void
   /** Track E3d-c (design mode): the `content:*` text is the post's and cannot be edited here. */
   lockContentText?: () => boolean
-  onLockedEdit?: (nodeId: string) => void
+  onLockedEdit?: (nodeId: string, kind: LockedTextKind) => void
   preferredBrandAsset?: (kind: StudioBrandAssetKind) => string | null
 }
 
@@ -128,6 +128,8 @@ export function createSessionPreview(
   const overlay = createPreviewOverlay(store, {
     vocabulary: options.vocabulary,
     sampleText: () => options.payload()?.preview?.sampleText ?? null,
+    // Track FB-69 (H-68): the kit's display name / handle for the brand text layers; null on an older app.
+    brandText: () => options.payload()?.brand?.text ?? null,
     loadImage: (url) => api.fetchBytes(url),
     lockContentText: options.lockContentText,
     onLockedEdit: options.onLockedEdit,

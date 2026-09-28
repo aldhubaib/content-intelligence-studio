@@ -35,6 +35,12 @@ export interface StudioBindingsVocabulary {
   reserved: string[]
   /** `user-image`, `company-logo-light`, `company-logo-dark` */
   brandKinds: string[]
+  /**
+   * Track FB-69 (PATCHES H-68): the brand TEXT names — `display-name`, `handle` —
+   * TEXT layers the brand kit fills (`brand.text`), no gallery, no `:<name>`
+   * suffix, never required. Absent on an older app → no such binding exists.
+   */
+  brandText?: string[]
   /** `cover`, `repeat`, `ending` */
   roles: string[]
   /** Legacy `slot:<name>` → v3 slot (`headline` → `title`, `cover` → `image`, …). */
@@ -193,6 +199,13 @@ export interface StudioBrand {
   /** TWO colours (FB-44 §4) — the `Brand` variables collection inside the document mirrors them. */
   colors: Record<'primary' | 'secondary', string>
   assets: StudioBrandAsset[]
+  /**
+   * Track FB-69 (PATCHES H-68): the kit's brand TEXT as the render path prints
+   * it, keyed by slot — `display-name` → the name, `handle` → `@handle`; `""`
+   * when the kit has none (painted as empty, never the placeholder). Absent on
+   * an older app → the layers keep their own words.
+   */
+  text?: Record<string, string>
 }
 
 export interface StudioFont {

@@ -27,6 +27,13 @@
 // anyway is put back to the document's placeholder. A `preferredBrandAsset`
 // (the person's user-image choice for the output) is what an unnamed
 // `brand:user-image` layer previews with.
+//
+// Track FB-69 (PATCHES H-68, `brandText`): a TEXT layer named
+// `brand:display-name` / `brand:handle` shows the kit's value from the
+// payload's `brand.text` through the same channel — an empty value paints an
+// empty layer (the app's rule: never the placeholder, never a refusal); no
+// `brand.text` (an older app) paints nothing. In design mode the two layers are
+// locked like `content:*` text, with their own sentence.
 
 import { isEqual, pick } from 'es-toolkit'
 import { shallowRef, type Ref } from 'vue'
@@ -47,7 +54,15 @@ import type {
 import { bindingOf, listBindings, roleOfFrameName, type Binding, type BindingRef } from './bindings'
 import { resolveBrandAsset } from './brand-library'
 import { serializeGraph, type SerializedDocument } from './document'
-import { contentOf, contentPreviewChanges, type ContentPreviewSelection } from './preview'
+import {
+  contentOf,
+  contentPreviewChanges,
+  textPreviewChanges,
+  type ContentPreviewSelection
+} from './preview'
+
+/** Which fixed text a locked layer carries (design mode): the post's, or the brand kit's. */
+export type LockedTextKind = 'content' | 'brand-text'
 
 export interface LoadedBrandAsset {
   asset: StudioBrandAsset
@@ -62,8 +77,13 @@ export interface PreviewOverlayOptions {
   log?: (message: string, error: unknown) => void
   /** Track E3d-c: the text on `content:*` text layers comes from the post and cannot be edited here. */
   lockContentText?: () => boolean
-  /** Told (node id) when a locked layer's text edit was refused / put back. */
-  onLockedEdit?: (nodeId: string) => void
+  /** Told (node id, which fixed text) when a locked layer's text edit was refused / put back. */
+  onLockedEdit?: (nodeId: string, kind: LockedTextKind) => void
+  /**
+   * Track FB-69: the kit's brand text by slot (`payload.brand.text`); null /
+   * absent → no `brand:display-name` / `brand:handle` layer is painted.
+   */
+  brandText?: () => Record<string, string> | null
   /** Track E3d-c: the asset an unnamed `brand:<kind>` layer previews with before the gallery default (the output's user-image choice). */
   preferredBrandAsset?: (kind: StudioBrandAssetKind) => string | null
 }
@@ -85,8 +105,10 @@ export interface PreviewOverlay {
   brandAssetFor(layerId: string): StudioBrandAsset | null
   /** True while the layer shows a preview value. */
   isPreviewed(nodeId: string): boolean
-  /** Track E3d-c: true for a `content:*` text layer while content text is locked (design mode). */
+  /** Track E3d-c: true for a `content:*` (or, FB-69, `brand:<text>`) text layer while content text is locked (design mode). */
   isLocked(nodeId: string): boolean
+  /** Which fixed text a locked layer carries — the post's or the brand kit's; null when not locked. */
+  lockedKind(nodeId: string): LockedTextKind | null
   /** Re-read the graph and paint / lift as needed. */
   sync(): void
   /** The document WITHOUT the overlay — what every save sends. */
@@ -276,12 +298,26 @@ export function createPreviewOverlay(
       if (!bytes) return null
       return { fills: [imageFill(ensureImage(bytes), 'FILL', firstImageFill(node.fills))] }
     }
+    if (ref.binding.kind === 'brand-text') return desiredBrandText(ref.binding.slot, node)
     if (node.type === 'TEXT') return null
     const asset = brandAssetFor(node.id, ref.binding)
     const bytes = asset ? brandBytes.get(asset.id) : undefined
     if (!asset || !bytes) return null
     const scale = asset.kind === 'user-image' ? 'FILL' : 'FIT'
     return { fills: [imageFill(ensureImage(bytes), scale, firstImageFill(node.fills))] }
+  }
+
+  /**
+   * Track FB-69: the kit's text for a `brand:<text slot>` TEXT layer — an empty
+   * value paints an empty layer; no `brand.text` (an older app) or a slot the
+   * app did not send paints nothing.
+   */
+  function desiredBrandText(slot: string, node: SceneNode): Partial<SceneNode> | null {
+    if (node.type !== 'TEXT') return null
+    const value = options.brandText?.()?.[slot]
+    if (typeof value !== 'string') return null
+    if (textSuppressed(node.id) || autoSizedInLayout(node)) return null
+    return textPreviewChanges(node, value)
   }
 
   function brandAssetFor(layerId: string, binding?: Binding): StudioBrandAsset | null {
@@ -308,12 +344,17 @@ export function createPreviewOverlay(
     return node ? bindingOf(node, options.vocabulary()) : null
   }
 
-  /** A `content:<text slot>` TEXT layer — the layers design mode locks. */
-  function isLockedTextLayer(nodeId: string): boolean {
+  /** A `content:<text slot>` or (FB-69) `brand:<text slot>` TEXT layer — the layers design mode locks — and which text it carries. */
+  function lockedTextKindOf(nodeId: string): LockedTextKind | null {
     const node = graph().getNode(nodeId)
-    if (node?.type !== 'TEXT') return false
+    if (node?.type !== 'TEXT') return null
     const b = bindingOf(node, options.vocabulary())
-    return b?.kind === 'content' && b.slot !== 'image'
+    if (b?.kind === 'brand-text') return 'brand-text'
+    return b?.kind === 'content' && b.slot !== 'image' ? 'content' : null
+  }
+
+  function isLockedTextLayer(nodeId: string): boolean {
+    return lockedTextKindOf(nodeId) !== null
   }
 
   function apply(node: SceneNode, desired: Partial<SceneNode>): void {
@@ -432,7 +473,7 @@ export function createPreviewOverlay(
       }
       applied.delete(id)
       graph().updateNodePreview(id, putBack)
-      options.onLockedEdit?.(id)
+      options.onLockedEdit?.(id, lockedTextKindOf(id) ?? 'content')
     }
     sync()
   }
@@ -569,6 +610,8 @@ export function createPreviewOverlay(
       sync()
     })
   )
+  // Track FB-69: the kit's text needs no selection — paint whatever the open document already binds.
+  sync()
 
   return {
     content,
@@ -595,6 +638,7 @@ export function createPreviewOverlay(
     brandAssetFor: (layerId) => brandAssetFor(layerId),
     isPreviewed: (nodeId) => applied.has(nodeId),
     isLocked: (nodeId) => locked() && isLockedTextLayer(nodeId),
+    lockedKind: (nodeId) => (locked() ? lockedTextKindOf(nodeId) : null),
     sync,
     serialize,
     dispose() {

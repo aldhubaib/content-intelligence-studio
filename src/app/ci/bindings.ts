@@ -32,6 +32,8 @@ export const DEFAULT_VOCABULARY: StudioBindingsVocabulary = {
   contentImage: ['image'],
   reserved: ['ai-image'],
   brandKinds: ['user-image', 'company-logo-light', 'company-logo-dark'],
+  // CI (Track FB-69, H-68): the two brand TEXT names the kit fills.
+  brandText: ['display-name', 'handle'],
   roles: [...ROLE_FRAMES],
   legacy: {
     headline: 'title',
@@ -46,13 +48,27 @@ export const DEFAULT_VOCABULARY: StudioBindingsVocabulary = {
 export type Binding =
   | { kind: 'content'; slot: string }
   | { kind: 'brand'; slotKind: string; name: string | null }
+  /** CI (Track FB-69, H-68): a TEXT layer the brand kit fills — `brand:display-name`, `brand:handle`. */
+  | { kind: 'brand-text'; slot: string }
 
-/** `content:title`, `brand:user-image`, `brand:user-image:Hero` */
+/** `content:title`, `brand:user-image`, `brand:user-image:Hero`, `brand:display-name` */
 export function bindingName(binding: Binding): string {
   if (binding.kind === 'content') return `${CONTENT_PREFIX}${binding.slot}`
+  if (binding.kind === 'brand-text') return `${BRAND_PREFIX}${binding.slot}`
   return binding.name
     ? `${BRAND_PREFIX}${binding.slotKind}:${binding.name}`
     : `${BRAND_PREFIX}${binding.slotKind}`
+}
+
+/** CI (Track FB-69): `display-name` / `handle` when the app's vocabulary names them; never on an older app. */
+export function isBrandTextSlot(vocabulary: StudioBindingsVocabulary, slot: string): boolean {
+  return vocabulary.brandText?.includes(slot) ?? false
+}
+
+/** A binding the pipeline fills with TEXT — a content text slot or a brand text slot. */
+export function isTextBinding(vocabulary: StudioBindingsVocabulary, binding: Binding): boolean {
+  if (binding.kind === 'brand-text') return true
+  return binding.kind === 'content' && isContentTextSlot(vocabulary, binding.slot)
 }
 
 export function isContentSlot(vocabulary: StudioBindingsVocabulary, slot: string): boolean {
@@ -93,6 +109,9 @@ export function parseBindingName(
   if (head === BRAND_PREFIX) {
     const second = rest.indexOf(':')
     const slotKind = (second === -1 ? rest : rest.slice(0, second)).trim().toLowerCase()
+    // CI (Track FB-69): a brand TEXT slot takes no `:<name>` suffix — `brand:handle:x` is not a binding (the app's rule).
+    if (isBrandTextSlot(vocabulary, slotKind))
+      return second === -1 ? { kind: 'brand-text', slot: slotKind } : null
     const name = second === -1 ? null : rest.slice(second + 1).trim() || null
     return vocabulary.brandKinds.includes(slotKind) ? { kind: 'brand', slotKind, name } : null
   }
@@ -344,7 +363,8 @@ function shapeProblems(
   const counts = new Map<string, number>()
   for (const b of bindings) {
     counts.set(b.name, (counts.get(b.name) ?? 0) + 1)
-    const isText = b.binding.kind === 'content' && isContentTextSlot(vocabulary, b.binding.slot)
+    // CI (Track FB-69): a brand text binding is a text layer too — never blocking, a shape under it is the one warning.
+    const isText = isTextBinding(vocabulary, b.binding)
     if (isText && b.nodeType !== 'TEXT') reasons.push({ code: 'text_on_shape', name: b.name })
     if (!isText && b.nodeType === 'TEXT') reasons.push({ code: 'image_on_text', name: b.name })
   }

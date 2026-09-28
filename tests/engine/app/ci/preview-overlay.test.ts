@@ -62,11 +62,27 @@ interface Fixture {
   overlay: PreviewOverlay
   /** Track E3d-c: node ids whose text edit the locked overlay refused. */
   refused: string[]
-  ids: Record<'title' | 'body' | 'image' | 'brand' | 'repeatBody' | 'cover' | 'repeat', string>
+  ids: Record<
+    | 'title'
+    | 'body'
+    | 'image'
+    | 'brand'
+    | 'repeatBody'
+    | 'cover'
+    | 'repeat'
+    | 'displayName'
+    | 'handle',
+    string
+  >
   /** The document before any preview — every save must equal it. */
   before: string
   loads: string[]
+  /** Track FB-69: the kind the locked overlay reported with each refusal. */
+  refusedKinds: string[]
 }
+
+/** Track FB-69: the kit's brand text as the app's payload carries it. */
+const BRAND_TEXT = { 'display-name': 'Nizek', handle: '@nizek' }
 
 function settle(): Promise<void> {
   return new Promise((resolve) => {
@@ -83,7 +99,13 @@ afterEach(() => {
 })
 
 function build(
-  options: { withImage?: boolean; lock?: boolean; preferredUserImage?: string | null } = {}
+  options: {
+    withImage?: boolean
+    lock?: boolean
+    preferredUserImage?: string | null
+    /** Track FB-69: `payload.brand.text`; `undefined` = an older app that sends none. */
+    brandText?: Record<string, string> | null
+  } = {}
 ): Fixture {
   const store = createEditorStore()
   const graph = new SceneGraph()
@@ -120,6 +142,22 @@ function build(
     width: 400,
     height: 400
   })
+  // Track FB-69: the two brand TEXT layers with their seed placeholders (a quote-card template).
+  const displayName = graph.createNode('TEXT', cover.id, {
+    name: 'brand:display-name',
+    text: 'Your name',
+    styleRuns: [{ start: 0, length: 9, style: { fontWeight: 600 } }],
+    width: 600,
+    height: 60,
+    fontSize: 32
+  })
+  const handle = graph.createNode('TEXT', cover.id, {
+    name: 'Brand:Handle',
+    text: '@yourhandle',
+    width: 600,
+    height: 40,
+    fontSize: 24
+  })
   const repeat = graph.createNode('FRAME', page.id, {
     name: 'repeat',
     x: 1200,
@@ -139,11 +177,16 @@ function build(
   const before = JSON.stringify(serializeGraph(store.graph, ENGINE))
   const loads: string[] = []
   const refused: string[] = []
+  const refusedKinds: string[] = []
   const overlay = createPreviewOverlay(store, {
     vocabulary: () => DEFAULT_VOCABULARY,
     sampleText: () => SAMPLE,
+    brandText: options.brandText === undefined ? undefined : () => options.brandText ?? null,
     lockContentText: options.lock ? () => true : undefined,
-    onLockedEdit: (id) => refused.push(id),
+    onLockedEdit: (id, kind) => {
+      refused.push(id)
+      refusedKinds.push(kind)
+    },
     preferredBrandAsset: options.preferredUserImage
       ? (kind) => (kind === 'user-image' ? (options.preferredUserImage ?? null) : null)
       : undefined,
@@ -159,6 +202,7 @@ function build(
     store,
     overlay,
     refused,
+    refusedKinds,
     ids: {
       title: title.id,
       body: body.id,
@@ -166,7 +210,9 @@ function build(
       brand: brand.id,
       repeatBody: repeatBody.id,
       cover: cover.id,
-      repeat: repeat.id
+      repeat: repeat.id,
+      displayName: displayName.id,
+      handle: handle.id
     },
     before,
     loads
@@ -460,5 +506,144 @@ describe('design mode — locked content text (Track E3d-c)', () => {
     overlay.setBrandChoice(ids.brand, 'hero')
     expect(overlay.brandAssetFor(ids.brand)?.id).toBe('hero')
     expect(saved(overlay)).toBe(before)
+  })
+})
+
+describe('brand text preview (Track FB-69, H-68)', () => {
+  test('brand:display-name / brand:handle show the kit’s text from the payload; nothing is an edit, the save is byte-equal', () => {
+    const { store, overlay, ids, before } = build({ brandText: BRAND_TEXT })
+    // Painted on sync — no content selection needed (the kit is not a preview choice).
+    expect(node(store, ids.displayName).text).toBe('Nizek')
+    expect(node(store, ids.displayName).styleRuns).toEqual([
+      { start: 0, length: 5, style: { fontWeight: 600 } }
+    ])
+    // Case-insensitive name, like every binding.
+    expect(node(store, ids.handle).text).toBe('@nizek')
+    expect(overlay.isPreviewed(ids.displayName)).toBe(true)
+    expect(overlay.isPreviewed(ids.handle)).toBe(true)
+    // Box and font stay.
+    expect(node(store, ids.displayName).width).toBe(600)
+    expect(node(store, ids.displayName).fontSize).toBe(32)
+    // The content layers are untouched without a content selection.
+    expect(node(store, ids.title).text).toBe('Title placeholder')
+
+    expect(store.hasUnsavedChanges()).toBe(false)
+    expect(store.undo.canUndo).toBe(false)
+    expect(saved(overlay)).toBe(before)
+    expect(saved(overlay)).toContain('"Your name"')
+    expect(saved(overlay)).toContain('"@yourhandle"')
+    expect(saved(overlay)).not.toContain('Nizek')
+  })
+
+  test('an empty kit value paints an empty layer — never the placeholder, never a refusal', () => {
+    const { store, overlay, ids, before } = build({
+      brandText: { 'display-name': 'Nizek', handle: '' }
+    })
+    expect(node(store, ids.handle).text).toBe('')
+    expect(overlay.isPreviewed(ids.handle)).toBe(true)
+    expect(node(store, ids.displayName).text).toBe('Nizek')
+    expect(saved(overlay)).toBe(before)
+    // The runs of the emptied layer collapse; the document keeps its own.
+    expect(node(store, ids.displayName).styleRuns).toEqual([
+      { start: 0, length: 5, style: { fontWeight: 600 } }
+    ])
+    expect(store.hasUnsavedChanges()).toBe(false)
+  })
+
+  test('no brand.text (an older app) leaves the layers untouched; a slot the app did not send too', () => {
+    const older = build()
+    expect(node(older.store, older.ids.displayName).text).toBe('Your name')
+    expect(node(older.store, older.ids.handle).text).toBe('@yourhandle')
+    expect(older.overlay.isPreviewed(older.ids.displayName)).toBe(false)
+    expect(saved(older.overlay)).toBe(older.before)
+    older.overlay.dispose()
+    older.store.dispose()
+
+    const partial = build({ brandText: { 'display-name': 'Nizek' } })
+    expect(node(partial.store, partial.ids.displayName).text).toBe('Nizek')
+    expect(node(partial.store, partial.ids.handle).text).toBe('@yourhandle')
+    expect(partial.overlay.isPreviewed(partial.ids.handle)).toBe(false)
+    expect(saved(partial.overlay)).toBe(partial.before)
+
+    const none = build({ brandText: null })
+    expect(node(none.store, none.ids.displayName).text).toBe('Your name')
+    expect(saved(none.overlay)).toBe(none.before)
+  })
+
+  test('a selected brand text layer shows its own words; the preview returns on deselect; an edit is adopted', () => {
+    const { store, overlay, ids } = build({ brandText: BRAND_TEXT })
+    store.select([ids.displayName])
+    expect(node(store, ids.displayName).text).toBe('Your name')
+    expect(overlay.isPreviewed(ids.displayName)).toBe(false)
+    store.select([])
+    expect(node(store, ids.displayName).text).toBe('Nizek')
+
+    store.select([ids.displayName])
+    store.updateNodeWithUndo(ids.displayName, { text: 'Name goes here' }, 'Edit text')
+    store.select([])
+    expect(node(store, ids.displayName).text).toBe('Nizek')
+    const doc = overlay.serialize(ENGINE)
+    expect(doc.graph.nodes.find(([id]) => id === ids.displayName)?.[1].text).toBe('Name goes here')
+    expect(JSON.stringify(doc)).not.toContain('Nizek')
+    expect(store.hasUnsavedChanges()).toBe(true)
+  })
+
+  test('serialize restores the originals; dispose lifts them; a rename out of the vocabulary drops the paint', () => {
+    const { store, overlay, ids, before } = build({ brandText: BRAND_TEXT })
+    overlay.setContent({ kind: 'sample' })
+    const doc = overlay.serialize(ENGINE)
+    const plain = doc.graph.nodes.find(([id]) => id === ids.displayName)?.[1]
+    expect(plain?.text).toBe('Your name')
+    expect(plain?.styleRuns).toEqual([{ start: 0, length: 9, style: { fontWeight: 600 } }])
+    expect(JSON.stringify(doc)).toBe(before)
+
+    // `brand:handle:x` is not a binding (the app's rule) — the layer shows its own text again.
+    store.updateNodeWithUndo(ids.handle, { name: 'brand:handle:x' }, 'Rename')
+    expect(node(store, ids.handle).text).toBe('@yourhandle')
+    expect(overlay.isPreviewed(ids.handle)).toBe(false)
+    store.updateNodeWithUndo(ids.handle, { name: 'brand:handle' }, 'Rename')
+    expect(node(store, ids.handle).text).toBe('@nizek')
+    // The renames are the only edits the document carries.
+    const renamed = overlay.serialize(ENGINE)
+    expect(renamed.graph.nodes.find(([id]) => id === ids.handle)?.[1].text).toBe('@yourhandle')
+    expect(JSON.stringify(renamed)).not.toContain('@nizek')
+
+    overlay.dispose()
+    expect(node(store, ids.displayName).text).toBe('Your name')
+    expect(node(store, ids.handle).text).toBe('@yourhandle')
+    expect(JSON.stringify(serializeGraph(store.graph, ENGINE))).toBe(JSON.stringify(renamed))
+  })
+
+  test('design mode: the two layers are locked like content text, with their own kind reported', () => {
+    const { store, overlay, ids, before, refused, refusedKinds } = build({
+      lock: true,
+      brandText: BRAND_TEXT
+    })
+    expect(overlay.isLocked(ids.displayName)).toBe(true)
+    expect(overlay.lockedKind(ids.displayName)).toBe('brand-text')
+    expect(overlay.lockedKind(ids.title)).toBe('content')
+    expect(overlay.lockedKind(ids.brand)).toBeNull()
+
+    // Selection does not lift the kit's text.
+    store.select([ids.handle])
+    expect(node(store, ids.handle).text).toBe('@nizek')
+
+    // A write that lands anyway is put back and reported as the brand kit's.
+    store.updateNode(ids.handle, { text: '@mine' })
+    expect(refused).toEqual([ids.handle])
+    expect(refusedKinds).toEqual(['brand-text'])
+    expect(node(store, ids.handle).text).toBe('@nizek')
+    expect(saved(overlay)).toBe(before)
+
+    // Boxes stay editable.
+    store.updateNode(ids.handle, { width: 300 })
+    expect(node(store, ids.handle).width).toBe(300)
+    expect(refused).toEqual([ids.handle])
+  })
+
+  test('without the lock the layers are not locked even with the kit’s text painted', () => {
+    const { overlay, ids } = build({ brandText: BRAND_TEXT })
+    expect(overlay.isLocked(ids.displayName)).toBe(false)
+    expect(overlay.lockedKind(ids.displayName)).toBeNull()
   })
 })
