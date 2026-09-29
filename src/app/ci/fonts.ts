@@ -20,6 +20,12 @@ export function styleNameFor(weight: number, style: 'normal' | 'italic'): string
 export interface HostedFontReport {
   registered: string[]
   failed: Array<{ family: string; style: string; message: string }>
+  /**
+   * H-71: is the bundled colour emoji face (`Noto Color Emoji`) the last family of
+   * every paragraph right now? `false` until the session's non-blocking
+   * `installEmojiFace` lands — the brand fonts never wait for it.
+   */
+  emojiFace: boolean
 }
 
 /**
@@ -51,7 +57,7 @@ export async function installHostedFonts(
     return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer
   })
 
-  const report: HostedFontReport = { registered: [], failed: [] }
+  const report: HostedFontReport = { registered: [], failed: [], emojiFace: false }
   await Promise.all(
     [...byKey].map(async ([key, font]) => {
       const style = styleNameFor(font.weight, font.style)

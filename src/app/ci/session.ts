@@ -56,7 +56,12 @@ import { installBrandLibrary, type BrandLibraryReport } from './brand-library'
 import { detachBrandInstances } from './brand-shape'
 import { HOSTED_COPY } from './copy'
 import { deserializeGraph, type SerializedDocument } from './document'
-import { installHostedFonts, type HostedFontReport } from './fonts'
+import {
+  installEmojiFace as installEmojiFaceDefault,
+  redrawTextForEmojiFace,
+  type EmojiFaceResult
+} from './emoji-face'
+import { installHostedFonts as installHostedFontsDefault, type HostedFontReport } from './fonts'
 import { hostedToken, scrubTokenFromLocation, type HostedConfig } from './hosted'
 import { PREVIEW_COPY } from './preview'
 import { createSessionPreview, type SessionPreview } from './preview-candidates'
@@ -136,6 +141,8 @@ export interface HostedSession {
   readonly graphTick: Ref<number>
   readonly saveState: ComputedRef<HostedSaveState>
   readonly fontReport: Ref<HostedFontReport | null>
+  /** H-71: what the non-blocking emoji-face registration did; null until it settles (or with `skipFonts`). */
+  readonly emojiFace: Ref<EmojiFaceResult | null>
   readonly brandReport: Ref<BrandLibraryReport | null>
   readonly aiEnabled: ComputedRef<boolean>
   /** Track E3d-b1: Preview with real content — overlay + Approved candidates; never saved. */
@@ -183,7 +190,13 @@ export interface HostedSessionOptions {
   autosave?: AutosaveScheduler
   /** Skip the brand-media fetches (unit tests). */
   skipBrandLibrary?: boolean
+  /** Skip the brand fonts AND the emoji face (unit tests). */
   skipFonts?: boolean
+  /** H-71: injected font steps (unit tests) — the brand-font installer and the emoji-face loader. */
+  fonts?: {
+    install?: typeof installHostedFontsDefault
+    installEmojiFace?: typeof installEmojiFaceDefault
+  }
   /** Receives the payload's `ai` block; defaults to pinning the AI panel's provider + models (Part F). */
   applyAI?: (ai: StudioTemplatePayload['ai']) => void
   /** Track E3d-c: injected toast for the locked-text hint (tests); defaults to the shell toast. */
@@ -235,6 +248,9 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
   const hint = options.hint ?? ((message: string) => toast.info(message))
   const version = shallowRef(0)
   const fontReport = shallowRef<HostedFontReport | null>(null)
+  const emojiFace = shallowRef<EmojiFaceResult | null>(null)
+  const installHostedFonts = options.fonts?.install ?? installHostedFontsDefault
+  const installEmojiFace = options.fonts?.installEmojiFace ?? installEmojiFaceDefault
   const brandReport = shallowRef<BrandLibraryReport | null>(null)
   const graphTick = shallowRef(0)
   const dirty = computed(() => store.hasUnsavedChanges())
@@ -410,6 +426,9 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
         })
         if (fontReport.value.failed.length > 0)
           toast.warning(HOSTED_COPY.fontsMissing(fontReport.value.failed.length))
+        // H-71: the bundled colour emoji face joins the chain AFTER the brand fonts and
+        // never holds the document — the canvas re-shapes its text once it lands.
+        void registerEmojiFace(load.signal)
       }
       load.signal.throwIfAborted()
 
@@ -488,6 +507,21 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
       stopAutosave = autosave.start(() => {
         if (dirty.value && !saving && status.value.kind === 'ready') void saveDraft()
       })
+  }
+
+  /**
+   * H-71: register the emoji face without blocking the load. On success the
+   * report says so and every canvas re-shapes its text once (the same tail
+   * core's own `loadFonts` runs — sync the font generation, drop the pictures,
+   * one render request). A failure is already one log line inside the loader.
+   */
+  async function registerEmojiFace(signal: AbortSignal): Promise<void> {
+    const result = await installEmojiFace({ signal })
+    if (disposed || signal.aborted) return
+    emojiFace.value = result
+    if (fontReport.value) fontReport.value = { ...fontReport.value, emojiFace: result.registered }
+    if (!result.registered) return
+    redrawTextForEmojiFace([store.renderer, ...store.canvasRenderers], () => store.requestRender())
   }
 
   /**
@@ -755,6 +789,7 @@ export function createHostedSession(options: HostedSessionOptions): HostedSessio
     graphTick,
     saveState,
     fontReport,
+    emojiFace,
     brandReport,
     aiEnabled,
     preview,
