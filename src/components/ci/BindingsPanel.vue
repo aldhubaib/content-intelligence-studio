@@ -359,7 +359,6 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
           <code class="font-mono text-[11px] text-surface">{{ row.name }}</code>
           <span class="flex-1" />
           <template v-if="row.layers.length > 0">
-            <span class="sr-only">{{ BRAND_TEXT_COPY.present(row.layers.length) }}</span>
             <button
               v-for="binding in row.layers"
               :key="binding.nodeId"

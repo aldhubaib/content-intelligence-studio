@@ -240,9 +240,11 @@ test.describe('hosted mode — the Bindings section is a disclosure (FB-78)', ()
     await expect(checklist).toBeHidden()
 
     // The person's choice is remembered per browser and wins over the collapsed default.
+    // Re-enter through the hosted URL the app hands out — the token is scrubbed from the address
+    // bar on boot (E3c), so a bare `page.reload()` would open the standalone Studio instead.
     await toggle.click()
     await expect(panel).toHaveAttribute('data-open', 'true')
-    await page.reload()
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
     await canvas.waitForInit()
     await expect(page.getByTestId('ci-bindings-status')).toHaveText('All changes saved.')
     await expect(page.getByTestId('ci-bindings-panel')).toHaveAttribute('data-open', 'true')
@@ -326,6 +328,9 @@ test.describe('hosted mode — the Bindings section is a disclosure (FB-78)', ()
     await expect(handleChips).toHaveText(['cover', 'repeat'])
     await expect(brandText).not.toContainText('added 2 times')
     await expect(brandText).not.toContainText('added 3 times')
+    // No count word on a name's row at all — the row is the name, its chips and the description.
+    await expect(page.getByTestId('ci-brand-text-handle')).not.toContainText('added')
+    await expect(page.getByTestId('ci-brand-text-display-name')).not.toContainText('added')
     await expect(handleChips.nth(1)).toHaveAccessibleName('Jump to brand:handle in repeat')
 
     // Collapse the section: the header still offers Add role frame ▾ with the contract's roles.

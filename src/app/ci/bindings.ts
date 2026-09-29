@@ -360,9 +360,9 @@ export function roleStatusWords(role: RoleReport): string {
 export const BRAND_TEXT_COPY = {
   heading: 'Brand text',
   lead: 'Optional text layers the brand kit fills — never required.',
-  notAdded: 'not added — optional',
-  /** The jump chip's words: "added" / "added 2 times" (the same name on several layers). */
-  present: (count: number) => (count === 1 ? 'added' : `added ${count} times`)
+  notAdded: 'not added — optional'
+  // FB-78 (H-72): `present(n)` ("added" / "added 2 times") is retired — a present name shows one
+  // jump chip per layer, named by the role frame that holds it; no count word on the row.
 } as const
 
 export interface BrandTextRow {
