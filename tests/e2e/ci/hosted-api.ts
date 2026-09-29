@@ -6,9 +6,25 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { deflateSync } from 'node:zlib'
 
-import { type Page, type Route } from '@playwright/test'
+import { expect, type Page, type Route } from '@playwright/test'
 
 export const API = 'https://app.ci.test'
+
+/** FB-78 (H-72): the Bindings section's header toggle — the one `<button aria-expanded>` in its header. */
+export function bindingsToggle(page: Page) {
+  return page.getByTestId('ci-bindings-panel').locator('[data-slot="section-toggle"]')
+}
+
+/**
+ * FB-78 (H-72): a Usable template with every contract row met opens with the Bindings
+ * section COLLAPSED; a test that reads the body opens it first (idempotent).
+ */
+export async function openBindings(page: Page): Promise<void> {
+  const toggle = bindingsToggle(page)
+  await expect(toggle).toBeVisible()
+  if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+}
 export const TEMPLATE_ID = 'tpl-hosted-smoke'
 /** Track E3d-c: the design whose OWN copy the design spec opens, and the row its first save births. */
 export const DESIGN_ID = 'des-hosted-smoke'

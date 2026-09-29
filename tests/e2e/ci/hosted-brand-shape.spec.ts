@@ -16,6 +16,7 @@ import {
   FRAME_ID,
   TEMPLATE_ID,
   installAPI,
+  openBindings,
   type SavedBody
 } from './hosted-api'
 
@@ -106,6 +107,8 @@ test.describe('hosted mode — brand asset is a plain shape (FB-58)', () => {
       )
     ).toBe(0)
     // The insertion selected the shape (the Shape control follows the selection).
+    // FB-78 (H-72): the Shape row is pinned under the Bindings header — reachable while collapsed.
+    await expect(page.getByTestId('ci-bindings-panel')).toHaveAttribute('data-open', 'false')
     const shapeControl = page.getByTestId('ci-shape-control')
     await expect(shapeControl).toBeVisible()
     await expect(shapeControl).toHaveAttribute('data-shape', 'RECTANGLE')
@@ -138,7 +141,8 @@ test.describe('hosted mode — brand asset is a plain shape (FB-58)', () => {
     expect(circle.fillType).toBe('IMAGE')
     expect(circle.hasImage).toBe(true)
     expect({ width: circle.width, height: circle.height }).toEqual({ width: 300, height: 200 })
-    // The Bindings panel lists it under the cover.
+    // The Bindings panel lists it under the cover (the body needs the section open — FB-78).
+    await openBindings(page)
     await expect(page.getByTestId(`ci-binding-cover-${brandName}`)).toBeVisible()
     await canvas.waitForRender()
     await page.screenshot({ path: test.info().outputPath('hosted-brand-shape-circle.png') })

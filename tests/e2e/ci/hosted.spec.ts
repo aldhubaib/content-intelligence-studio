@@ -19,6 +19,7 @@ import {
   TEMPLATES_URL,
   installAPI,
   installAppPages,
+  openBindings,
   type SavedBody
 } from './hosted-api'
 
@@ -44,6 +45,9 @@ test.describe('hosted mode', () => {
     const status = page.getByTestId('ci-bindings-status')
     await expect(status).toHaveText('All changes saved.')
     // FB-44 §3: the Bindings panel — cover OK with its two layers, repeat / ending not added.
+    // FB-78 (H-72): Usable + every row met → the section opens collapsed; open it to read the body.
+    await expect(page.getByTestId('ci-bindings-panel')).toHaveAttribute('data-open', 'false')
+    await openBindings(page)
     await expect(page.getByTestId('ci-bindings-usable')).toHaveAttribute('data-usable', 'true')
     await expect(page.getByTestId('ci-bindings-usable')).toHaveText('Usable')
     await expect(page.getByTestId('ci-role-cover')).toHaveAttribute('data-status', 'ok')
