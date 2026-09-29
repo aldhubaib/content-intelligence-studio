@@ -4,14 +4,18 @@ import { describe, expect, test } from 'bun:test'
 import type { StudioPreviewCandidate, StudioPreviewContent } from '@/app/ci/api'
 import {
   PREVIEW_COPY,
+  candidateRowTitle,
   contentOf,
   contentPreviewChanges,
   contentTextFor,
   estimateBoxChars,
+  isPreviewTextSlot,
   preselectedCandidate,
+  previewGroupsOf,
   relativeTimeWords,
   remapStyleRuns,
   selectionWords,
+  stepIndexesFor,
   truncateWithEllipsis
 } from '@/app/ci/preview'
 
@@ -177,5 +181,149 @@ describe('menu words', () => {
     expect(preselectedCandidate([CANDIDATE], 'cand-1')).toBe(CANDIDATE)
     expect(preselectedCandidate([CANDIDATE], 'cand-9')).toBeNull()
     expect(preselectedCandidate([CANDIDATE], null)).toBeNull()
+  })
+})
+
+// CI: Track fb74-studio-preview-kinds (H-70) — article kinds as the second section.
+const STEPS = ['احذف اجتماعًا.', 'اكتب جدولًا.', 'أنهِ الاجتماع.']
+const KIND: StudioPreviewCandidate = {
+  id: 'kind:piece-1:how_to',
+  title: 'كيف تقلل الاجتماعات',
+  subtitle: 'إنتاجية',
+  body: STEPS.join('\n'),
+  cta: 'ابدأ اليوم.',
+  articleUrl: 'https://example.invalid/articles/preview',
+  bodyChunks: STEPS,
+  slots: { number: '٣', step: STEPS },
+  format: null,
+  formatLabel: null,
+  approvedAt: '2026-09-23T10:00:00Z',
+  imageUrl: null,
+  kind: { key: 'how_to', nameEn: 'How-to', nameAr: 'خطوات', pieceTitle: 'أسبوع بلا اجتماعات' }
+}
+
+describe('H-70 kind slots', () => {
+  test('number and step are text slots; they read slots.*, an Arabic candidate paints neither', () => {
+    expect(isPreviewTextSlot('number')).toBe(true)
+    expect(isPreviewTextSlot('step')).toBe(true)
+    expect(contentTextFor('number', KIND)).toBe('٣')
+    expect(contentTextFor('step', KIND, 0)).toBe(STEPS[0])
+    expect(contentTextFor('step', KIND, 2)).toBe(STEPS[2])
+    expect(contentTextFor('step', KIND, 3)).toBeNull() // past the last step
+    expect(contentTextFor('step', KIND)).toBeNull() // no index — a layer outside cover / repeat
+    expect(contentTextFor('number', CONTENT)).toBeNull()
+    expect(contentTextFor('step', CONTENT, 0)).toBeNull()
+    expect(contentTextFor('number', { ...KIND, slots: { number: '  ' } })).toBeNull()
+  })
+
+  test('step layers are numbered cover first, then each repeat frame in paint order; ending / unframed get none', () => {
+    const ROLES: Record<string, 'cover' | 'repeat' | 'ending'> = {
+      cover: 'cover',
+      'repeat-1': 'repeat',
+      'repeat-2': 'repeat',
+      ending: 'ending'
+    }
+    const role = (frameId: string) => ROLES[frameId] ?? null
+    const indexes = stepIndexesFor(
+      [
+        { nodeId: 'r2-a', slot: 'step', frameId: 'repeat-2' },
+        { nodeId: 'r1-a', slot: 'step', frameId: 'repeat-1' },
+        { nodeId: 'e-a', slot: 'step', frameId: 'ending' },
+        { nodeId: 'c-a', slot: 'step', frameId: 'cover' },
+        { nodeId: 'c-body', slot: 'body', frameId: 'cover' },
+        { nodeId: 'c-b', slot: 'step', frameId: 'cover' },
+        { nodeId: 'loose', slot: 'step', frameId: null },
+        { nodeId: 'x', slot: 'step', frameId: 'unnamed' }
+      ],
+      role
+    )
+    // Paint order inside a role is kept; cover before every repeat regardless of frame order.
+    expect([...indexes.entries()]).toEqual([
+      ['c-a', 0],
+      ['c-b', 1],
+      ['r2-a', 2],
+      ['r1-a', 3]
+    ])
+    expect(indexes.has('e-a')).toBe(false)
+    expect(indexes.has('loose')).toBe(false)
+    expect(indexes.has('x')).toBe(false)
+    expect(indexes.has('c-body')).toBe(false)
+  })
+
+  test('contentPreviewChanges paints the N-th step on the N-th step layer and the first chunk on a repeat body', () => {
+    const node = {
+      text: 'الخطوة',
+      styleRuns: [],
+      width: 900,
+      height: 80,
+      fontSize: 32,
+      lineHeight: null
+    }
+    expect(
+      contentPreviewChanges(node, 'step', KIND, { role: 'cover', maxChars: null, stepIndex: 0 })
+    ).toEqual({ text: STEPS[0] })
+    expect(
+      contentPreviewChanges(node, 'step', KIND, { role: 'repeat', maxChars: null, stepIndex: 1 })
+    ).toEqual({ text: STEPS[1] })
+    expect(
+      contentPreviewChanges(node, 'step', KIND, { role: 'ending', maxChars: null, stepIndex: null })
+    ).toBeNull()
+    expect(contentPreviewChanges(node, 'number', KIND, { role: 'cover', maxChars: null })).toEqual({
+      text: '٣'
+    })
+    expect(contentPreviewChanges(node, 'body', KIND, { role: 'repeat', maxChars: null })).toEqual({
+      text: STEPS[0]
+    })
+  })
+
+  test('the row and button words read "<Kind> · <piece title>", the kind name alone without one', () => {
+    expect(candidateRowTitle(KIND)).toBe('How-to · أسبوع بلا اجتماعات')
+    expect(
+      candidateRowTitle({
+        ...KIND,
+        kind: { key: 'how_to', nameEn: 'How-to', nameAr: 'خطوات', pieceTitle: '' }
+      })
+    ).toBe('How-to')
+    expect(candidateRowTitle(CANDIDATE)).toBe('عنوان')
+    expect(selectionWords({ kind: 'candidate', candidate: KIND })).toBe(
+      'Preview: How-to · أسبوع بلا اجتماعات'
+    )
+    expect(PREVIEW_COPY.kindsHeading).toBe('Article kinds')
+    expect(PREVIEW_COPY.written('3 h ago')).toBe('Written 3 h ago')
+  })
+
+  test('previewGroupsOf: groups when sent (flat list = every candidate once), one Arabic section for an older app', () => {
+    const sent = previewGroupsOf({
+      candidates: [CANDIDATE, KIND],
+      groups: [
+        { key: 'arabic', label: 'Approved Arabic candidates', candidates: [CANDIDATE] },
+        { key: 'kinds', label: 'Article kinds', candidates: [KIND] }
+      ]
+    })
+    expect(sent.groups.map((g) => [g.key, g.label, g.candidates.length])).toEqual([
+      ['arabic', 'Approved Arabic candidates', 1],
+      ['kinds', 'Article kinds', 1]
+    ])
+    expect(sent.candidates.map((c) => c.id)).toEqual(['cand-1', 'kind:piece-1:how_to'])
+    // An app that sends groups but a shorter flat list: the flat list still holds every group's candidate, once.
+    const partial = previewGroupsOf({
+      candidates: [CANDIDATE],
+      groups: [
+        { key: 'arabic', label: 'Approved Arabic candidates', candidates: [CANDIDATE] },
+        { key: 'kinds', label: 'Article kinds', candidates: [KIND] }
+      ]
+    })
+    expect(partial.candidates.map((c) => c.id)).toEqual(['cand-1', 'kind:piece-1:how_to'])
+    const older = previewGroupsOf({ candidates: [CANDIDATE] })
+    expect(older.groups).toEqual([
+      { key: 'arabic', label: PREVIEW_COPY.heading, candidates: [CANDIDATE] }
+    ])
+    expect(older.candidates).toEqual([CANDIDATE])
+    expect(previewGroupsOf({})).toEqual({
+      candidates: [],
+      groups: [{ key: 'arabic', label: PREVIEW_COPY.heading, candidates: [] }]
+    })
+    // `?preview=kind:…` finds the kind through the flat list.
+    expect(preselectedCandidate(sent.candidates, 'kind:piece-1:how_to')).toBe(KIND)
   })
 })

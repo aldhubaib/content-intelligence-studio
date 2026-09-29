@@ -57,6 +57,7 @@ import { serializeGraph, type SerializedDocument } from './document'
 import {
   contentOf,
   contentPreviewChanges,
+  stepIndexesFor,
   textPreviewChanges,
   type ContentPreviewSelection
 } from './preview'
@@ -278,6 +279,18 @@ export function createPreviewOverlay(
     return false
   }
 
+  /**
+   * Track fb74-studio-preview-kinds (H-70): which step each `content:step`
+   * layer shows — computed once per sync over the page's bindings (cover first,
+   * then the repeat frames in paint order); a layer not in the map paints nothing.
+   */
+  let stepIndexes: ReadonlyMap<string, number> = new Map()
+
+  function frameRole(frameId: string): StudioRoleName | null {
+    const frame = graph().getNode(frameId)
+    return frame ? roleOfFrameName(frame.name) : null
+  }
+
   /** What the overlay wants on this bound layer right now; null = nothing (lift). */
   function desiredFor(ref: BindingRef, node: SceneNode): Partial<SceneNode> | null {
     if (ref.binding.kind === 'content') {
@@ -287,7 +300,8 @@ export function createPreviewOverlay(
         if (textSuppressed(node.id) || autoSizedInLayout(node)) return null
         return contentPreviewChanges(node, ref.binding.slot, shown, {
           role: roleOf(ref),
-          maxChars: ref.maxChars
+          maxChars: ref.maxChars,
+          stepIndex: stepIndexes.get(node.id) ?? null
         })
       }
       if (ref.binding.slot !== 'image') return null
@@ -424,7 +438,17 @@ export function createPreviewOverlay(
     syncing = true
     try {
       const seen = new Set<string>()
-      for (const ref of listBindings(graph(), options.vocabulary(), store.state.currentPageId)) {
+      const refs = listBindings(graph(), options.vocabulary(), store.state.currentPageId)
+      // H-70: the step layers' order is a property of the whole page, not of one layer.
+      stepIndexes = stepIndexesFor(
+        refs.map((ref) => ({
+          nodeId: ref.nodeId,
+          slot: ref.binding.kind === 'content' ? ref.binding.slot : '',
+          frameId: ref.frameId
+        })),
+        frameRole
+      )
+      for (const ref of refs) {
         const node = graph().getNode(ref.nodeId)
         if (!node) continue
         seen.add(ref.nodeId)

@@ -1,4 +1,5 @@
-<!-- CI: **Preview with ▾** — an Approved Arabic candidate · Sample text · None (Track E3d-b1, FB-44 §6). -->
+<!-- CI: **Preview with ▾** — an Approved Arabic candidate · an article kind · Sample text · None
+     (Track E3d-b1, FB-44 §6; Track fb74-studio-preview-kinds, H-70: two labelled sections). -->
 <script setup lang="ts">
 import {
   DropdownMenuContent,
@@ -15,10 +16,11 @@ import { computed, ref } from 'vue'
 
 import { useRetainedPopup } from '@open-pencil/vue'
 
-import type { StudioPreviewCandidate } from '@/app/ci/api'
+import type { StudioPreviewCandidate, StudioPreviewGroup } from '@/app/ci/api'
 import { hostedSession } from '@/app/ci/boot'
 import {
   PREVIEW_COPY,
+  candidateRowTitle,
   relativeTimeWords,
   selectionWords,
   type ContentPreviewSelection
@@ -42,15 +44,37 @@ const state = computed(() => candidates.value?.state.value ?? { kind: 'idle' as 
 const now = ref(new Date())
 interface CandidateRow {
   candidate: StudioPreviewCandidate
+  /** An Arabic candidate's title line; a kind's "<Kind name> · <piece title>" (H-70). */
   title: string
+  /** "Approved 3 h ago" · a kind's "Written 3 h ago". */
   approved: string
 }
-const rows = computed<CandidateRow[]>(() =>
-  (state.value.kind === 'ready' ? state.value.candidates : []).map((candidate) => ({
+interface CandidateSection {
+  key: StudioPreviewGroup['key']
+  label: string
+  rows: CandidateRow[]
+  /** The words of an empty section. */
+  empty: string
+}
+function toRow(candidate: StudioPreviewCandidate): CandidateRow {
+  const relative = relativeTimeWords(candidate.approvedAt, now.value)
+  return {
     candidate,
-    title: candidate.title || candidate.id,
-    approved: PREVIEW_COPY.approved(relativeTimeWords(candidate.approvedAt, now.value))
+    title: candidateRowTitle(candidate),
+    approved: candidate.kind ? PREVIEW_COPY.written(relative) : PREVIEW_COPY.approved(relative)
+  }
+}
+// H-70: one labelled section per group the app sent (an older app → the one Arabic section).
+const sections = computed<CandidateSection[]>(() =>
+  (state.value.kind === 'ready' ? state.value.groups : []).map((group) => ({
+    key: group.key,
+    label: group.label,
+    rows: group.candidates.map(toRow),
+    empty: group.key === 'kinds' ? PREVIEW_COPY.kindsEmpty : PREVIEW_COPY.empty
   }))
+)
+const rows = computed<CandidateRow[]>(() =>
+  (state.value.kind === 'ready' ? state.value.candidates : []).map(toRow)
 )
 /** Radio value: a candidate id, 'sample' or 'none'. */
 const radioValue = computed(() => {
@@ -126,62 +150,78 @@ async function refresh() {
         :class="menuCls.content"
         data-test-id="ci-preview-menu-content"
       >
-        <DropdownMenuLabel class="px-2 py-1 text-[10px] tracking-wide text-muted uppercase">
-          {{ PREVIEW_COPY.heading }}
-        </DropdownMenuLabel>
-
         <DropdownMenuRadioGroup :model-value="radioValue" @update:model-value="pick">
-          <!-- Loading · unavailable · empty rows are inert; the sample and None always work. -->
-          <DropdownMenuItem
-            v-if="state.kind === 'loading' || state.kind === 'idle'"
-            :class="menuCls.item"
-            disabled
-            data-test-id="ci-preview-loading"
-          >
-            <span class="flex-1 text-muted">{{ PREVIEW_COPY.loading }}</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            v-else-if="state.kind === 'unavailable'"
-            :class="menuCls.item"
-            disabled
-            data-test-id="ci-preview-unavailable"
-          >
-            <span class="flex-1 text-muted">{{ PREVIEW_COPY.unavailable }}</span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            v-else-if="rows.length === 0"
-            :class="[menuCls.item, 'whitespace-normal']"
-            disabled
-            data-test-id="ci-preview-empty"
-          >
-            <span class="flex-1 text-muted">{{ PREVIEW_COPY.empty }}</span>
-          </DropdownMenuItem>
-          <template v-else>
-            <DropdownMenuRadioItem
-              v-for="row in rows"
-              :key="row.candidate.id"
-              :value="row.candidate.id"
-              :class="[menuCls.item, 'items-start']"
-              :data-test-id="`ci-preview-candidate-${row.candidate.id}`"
+          <!-- Loading · unavailable rows are inert under the Arabic heading; the sample and None always work. -->
+          <template v-if="state.kind !== 'ready'">
+            <DropdownMenuLabel class="px-2 py-1 text-[10px] tracking-wide text-muted uppercase">
+              {{ PREVIEW_COPY.heading }}
+            </DropdownMenuLabel>
+            <DropdownMenuItem
+              v-if="state.kind === 'loading' || state.kind === 'idle'"
+              :class="menuCls.item"
+              disabled
+              data-test-id="ci-preview-loading"
             >
-              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
-                <span class="truncate" dir="auto" lang="ar">{{ row.title }}</span>
-                <span class="flex items-center gap-1.5 text-[10px] text-muted">
-                  <span
-                    v-if="row.candidate.formatLabel"
-                    class="rounded-sm border border-border px-1 py-px"
-                    :data-format="row.candidate.format ?? undefined"
-                    >{{ row.candidate.formatLabel }}</span
-                  >
-                  <span>{{ row.approved }}</span>
+              <span class="flex-1 text-muted">{{ PREVIEW_COPY.loading }}</span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              v-else
+              :class="menuCls.item"
+              disabled
+              data-test-id="ci-preview-unavailable"
+            >
+              <span class="flex-1 text-muted">{{ PREVIEW_COPY.unavailable }}</span>
+            </DropdownMenuItem>
+          </template>
+          <!-- H-70: one labelled section per group — Approved Arabic candidates · Article kinds. An empty section says so. -->
+          <template v-else>
+            <template v-for="(section, index) in sections" :key="section.key">
+              <DropdownMenuSeparator v-if="index > 0" :class="menuCls.separator" />
+              <DropdownMenuLabel
+                class="px-2 py-1 text-[10px] tracking-wide text-muted uppercase"
+                :data-test-id="`ci-preview-section-${section.key}`"
+              >
+                {{ section.label }}
+              </DropdownMenuLabel>
+              <DropdownMenuItem
+                v-if="section.rows.length === 0"
+                :class="[menuCls.item, 'whitespace-normal']"
+                disabled
+                :data-test-id="
+                  section.key === 'kinds' ? 'ci-preview-kinds-empty' : 'ci-preview-empty'
+                "
+              >
+                <span class="flex-1 text-muted">{{ section.empty }}</span>
+              </DropdownMenuItem>
+              <DropdownMenuRadioItem
+                v-for="row in section.rows"
+                :key="row.candidate.id"
+                :value="row.candidate.id"
+                :class="[menuCls.item, 'items-start']"
+                :data-test-id="`ci-preview-candidate-${row.candidate.id}`"
+                :data-kind="row.candidate.kind?.key"
+              >
+                <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <span class="truncate" dir="auto" :lang="row.candidate.kind ? undefined : 'ar'">{{
+                    row.title
+                  }}</span>
+                  <span class="flex items-center gap-1.5 text-[10px] text-muted">
+                    <span
+                      v-if="row.candidate.formatLabel"
+                      class="rounded-sm border border-border px-1 py-px"
+                      :data-format="row.candidate.format ?? undefined"
+                      >{{ row.candidate.formatLabel }}</span
+                    >
+                    <span>{{ row.approved }}</span>
+                  </span>
                 </span>
-              </span>
-              <icon-lucide-check
-                v-if="radioValue === row.candidate.id"
-                class="mt-0.5 size-3 shrink-0"
-                aria-hidden="true"
-              />
-            </DropdownMenuRadioItem>
+                <icon-lucide-check
+                  v-if="radioValue === row.candidate.id"
+                  class="mt-0.5 size-3 shrink-0"
+                  aria-hidden="true"
+                />
+              </DropdownMenuRadioItem>
+            </template>
           </template>
 
           <DropdownMenuSeparator :class="menuCls.separator" />

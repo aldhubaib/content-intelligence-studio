@@ -28,7 +28,8 @@ export const PLUGIN_MAX_CHARS_KEY = 'maxChars'
 
 /** What the Studio assumes before the payload arrives (the app's vocabulary of this track). */
 export const DEFAULT_VOCABULARY: StudioBindingsVocabulary = {
-  contentText: ['title', 'subtitle', 'body', 'cta', 'article-url'],
+  // CI (Track fb74-studio-preview-kinds, H-70): `number` / `step` — the kind-only text slots (app `CONTENT_TEXT_SLOTS`).
+  contentText: ['title', 'subtitle', 'body', 'cta', 'article-url', 'number', 'step'],
   contentImage: ['image'],
   reserved: ['ai-image'],
   brandKinds: ['user-image', 'company-logo-light', 'company-logo-dark'],

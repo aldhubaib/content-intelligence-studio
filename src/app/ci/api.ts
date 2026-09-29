@@ -152,7 +152,11 @@ export interface StudioContractPayload {
 }
 
 export interface StudioPreviewPayload {
-  /** `GET` (bearer, app origin) → `{ candidates: StudioPreviewCandidate[] }`. */
+  /**
+   * `GET` (bearer, app origin) → `{ candidates: StudioPreviewCandidate[], groups?: StudioPreviewGroup[] }`.
+   * Track fb74-studio-preview-kinds (H-70): `groups` carries the two menu
+   * sections; `candidates` stays their concatenation for an older Studio.
+   */
   candidatesUrl: string
   sampleText: StudioPreviewContent
 }
@@ -166,6 +170,22 @@ export interface StudioPreviewContent {
   articleUrl: string
   /** Track E3d-c (design mode): the body as the app's `planRender` chunks it — `repeat` frames show `bodyChunks[0]`. */
   bodyChunks?: string[]
+  /**
+   * Track fb74-studio-preview-kinds (H-70): the kind-only slots — `content:number`
+   * takes `number`, the N-th `content:step` layer (cover first, then each repeat
+   * frame in paint order) takes `step[N]`. Absent on an Arabic candidate and on
+   * the sample → those layers keep their placeholder.
+   */
+  slots?: { number?: string; step?: string[] }
+}
+
+/** Track fb74-studio-preview-kinds (H-70): the kind behind a `kind:<piece>:<key>` candidate. */
+export interface StudioPreviewCandidateKind {
+  key: string
+  nameEn: string
+  nameAr: string
+  /** The piece's master title — the menu row reads "<Kind name> · <piece title>". */
+  pieceTitle: string
 }
 
 export interface StudioPreviewCandidate extends StudioPreviewContent {
@@ -174,9 +194,20 @@ export interface StudioPreviewCandidate extends StudioPreviewContent {
   format: string | null
   /** "LinkedIn Post" — the menu's format Tag; null with `format`. */
   formatLabel: string | null
+  /** An Arabic candidate's approval time; a kind candidate's written time. */
   approvedAt: string
   /** Bearer-gated image on the app origin for `content:image`, or null → the layer's placeholder stays. */
   imageUrl: string | null
+  /** Present on a kind candidate only (Track fb74-studio-preview-kinds). */
+  kind?: StudioPreviewCandidateKind
+}
+
+/** Track fb74-studio-preview-kinds (H-70): one labelled section of the Preview menu. */
+export type StudioPreviewGroupKey = 'arabic' | 'kinds'
+export interface StudioPreviewGroup {
+  key: StudioPreviewGroupKey
+  label: string
+  candidates: StudioPreviewCandidate[]
 }
 
 /** The three galleries as the layers name them: `brand:<kind>[:<asset name>]` (FB-44 §5). */
