@@ -22,6 +22,17 @@ const LOG_MISSING = '[CI Studio] emoji-face-missing'
 /** The bundled file — `EMOJI_FALLBACK_FONT_FILE` in `studio-render/emoji-face.ts`. */
 const ASSET_NAME = 'noto-color-emoji-emoji-400-normal'
 
+/**
+ * A REAL fetch of the font bytes. Under the Vite dev server the `?url` import is
+ * itself a request — `…/noto-color-emoji-emoji-400-normal.woff?import&url` — but
+ * that is Vite's JS module answering with the URL string, not the WOFF; only a
+ * request without `import` in its query carries the bytes.
+ */
+function isFontByteRequest(url: string): boolean {
+  if (!url.includes(ASSET_NAME)) return false
+  return !new URL(url).searchParams.has('import')
+}
+
 type FontReadiness = 'ready' | 'pending' | 'substituted' | 'exhausted'
 
 function readinessOf(page: Parameters<typeof installAPI>[0], nodeId: string) {
@@ -46,7 +57,7 @@ test.describe('hosted mode — emoji face (H-71)', () => {
     const fontRequests: Array<{ url: string; status: number | null; bytes: number }> = []
     page.on('response', async (response) => {
       const url = response.url()
-      if (!url.includes(ASSET_NAME)) return
+      if (!isFontByteRequest(url)) return
       // A cached / aborted body has no bytes to count; the status still tells.
       const bytes = await response.body().then(
         (body) => body.byteLength,
@@ -109,7 +120,8 @@ test.describe('hosted mode — emoji face (H-71)', () => {
     page.on('console', (message) => logs.push(message.text()))
     const fontRequests: string[] = []
     page.on('request', (request) => {
-      if (request.url().includes(ASSET_NAME)) fontRequests.push(request.url())
+      // Only the bytes count — the dev server's `?import&url` module request is not a font fetch.
+      if (isFontByteRequest(request.url())) fontRequests.push(request.url())
     })
     await page.goto('/')
     await canvas.waitForInit()
