@@ -13,13 +13,6 @@ import { useLocalStorage } from '@vueuse/core'
 import { computed, ref, watch } from 'vue'
 
 import {
-  BINDINGS_OPEN_STORAGE_KEY,
-  bindingsDefaultOpen,
-  parseStoredBindingsOpen,
-  resolveBindingsOpen,
-  serializeBindingsOpen
-} from '@/app/ci/bindings-panel'
-import {
   BRAND_TEXT_COPY,
   bindingsStatusWords,
   brandTextRows,
@@ -30,10 +23,19 @@ import {
   type BindingRef,
   type RoleReport
 } from '@/app/ci/bindings'
+import {
+  BINDINGS_OPEN_STORAGE_KEY,
+  bindingsDefaultOpen,
+  brandTextChipWords,
+  parseStoredBindingsOpen,
+  resolveBindingsOpen,
+  serializeBindingsOpen
+} from '@/app/ci/bindings-panel'
 import { hostedSession } from '@/app/ci/boot'
 import { contractChecklist, contractOf } from '@/app/ci/contract'
 import AddRoleFrameMenu from '@/components/ci/AddRoleFrameMenu.vue'
 import ShapeControl from '@/components/ci/ShapeControl.vue'
+import AppCollapsible from '@/components/ui/collapsible/AppCollapsible.vue'
 import AppAlert from '@/components/ui/feedback/AppAlert.vue'
 import PanelItemRow from '@/components/ui/panel/PanelItemRow.vue'
 import PanelSection from '@/components/ui/panel/PanelSection.vue'
@@ -75,6 +77,15 @@ const brandText = computed(() =>
       )
     : []
 )
+// FB-78 (H-72): the Brand text block is its own inline disclosure, collapsed by default (this page
+// only — the person's Bindings toggle is the one remembered); the collapsed row counts the names present.
+const brandTextOpen = ref(false)
+const brandTextSummary = computed(() => {
+  const present = brandText.value.filter((row) => row.layers.length > 0).length
+  return `${present} of ${brandText.value.length} added`
+})
+/** Every role's frame id, so a chip can name the frame that holds its layer. */
+const allRoles = computed<RoleReport[]>(() => report.value?.roles ?? [])
 
 /** Non-blocking shape problems (duplicates, wrong layer type) — warnings, listed once. */
 const warnings = computed(() =>
@@ -317,9 +328,24 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
         </PanelItemRow>
       </li>
     </ul>
-    <!-- Track FB-69: the brand kit's text names — optional, never part of the usable verdict. -->
-    <div v-if="brandText.length > 0" class="px-2 pt-1 pb-1" data-test-id="ci-brand-text">
-      <p class="text-[11px] font-semibold text-surface">{{ BRAND_TEXT_COPY.heading }}</p>
+    <!-- Track FB-69: the brand kit's text names — optional, never part of the usable verdict.
+         FB-78 (H-72): its own inline disclosure, collapsed by default; one chip PER LAYER named by
+         the role frame that holds it (a layer outside every role frame reads its layer name); the
+         count word is the row's sr-only summary only. -->
+    <AppCollapsible
+      v-if="brandText.length > 0"
+      v-model:open="brandTextOpen"
+      :label="BRAND_TEXT_COPY.heading"
+      class="px-2 pt-1 pb-1"
+      :ui="{ trigger: 'h-6 text-[11px] font-semibold', content: 'pt-0.5' }"
+      data-test-id="ci-brand-text"
+      :data-open="brandTextOpen ? 'true' : 'false'"
+    >
+      <template #actions>
+        <span class="text-[10px] text-muted" data-test-id="ci-brand-text-count">
+          {{ brandTextSummary }}
+        </span>
+      </template>
       <p class="text-[10px] text-muted">{{ BRAND_TEXT_COPY.lead }}</p>
       <ul class="flex flex-col gap-0.5 pt-1" :aria-label="BRAND_TEXT_COPY.heading">
         <li
@@ -333,16 +359,18 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
           <code class="font-mono text-[11px] text-surface">{{ row.name }}</code>
           <span class="flex-1" />
           <template v-if="row.layers.length > 0">
+            <span class="sr-only">{{ BRAND_TEXT_COPY.present(row.layers.length) }}</span>
             <button
               v-for="binding in row.layers"
               :key="binding.nodeId"
               type="button"
               class="max-w-44 truncate rounded bg-hover/60 px-1.5 py-0.5 text-[10px] text-surface hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              :aria-label="`Jump to ${binding.nodeName}`"
+              :aria-label="`Jump to ${row.name} in ${brandTextChipWords(binding, allRoles)}`"
+              :title="binding.nodeName"
               :data-test-id="`ci-brand-text-jump-${row.slot}`"
               @click="jumpTo(binding)"
             >
-              {{ BRAND_TEXT_COPY.present(row.layers.length) }}
+              {{ brandTextChipWords(binding, allRoles) }}
             </button>
           </template>
           <span v-else class="text-muted" :data-test-id="`ci-brand-text-words-${row.slot}`">
@@ -351,7 +379,7 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
           <span v-if="row.description" class="basis-full text-muted">{{ row.description }}</span>
         </li>
       </ul>
-    </div>
+    </AppCollapsible>
     <div v-if="strays.length > 0" class="px-2 pt-1 pb-1.5" data-test-id="ci-bindings-strays">
       <p class="text-[10px] text-muted">Outside every role frame — never rendered:</p>
       <div class="flex flex-wrap gap-1 pt-1">

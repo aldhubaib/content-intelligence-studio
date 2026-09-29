@@ -78,35 +78,41 @@ const bodyId = useId()
   >
     <template #default="{ open: isOpen, actions }">
       <PropertySectionHeader :class="styles.header({ class: ui?.header })">
-        <!-- CI (FB-78): a collapsible section's title is the toggle; actions never toggle (they stop the click). -->
+        <!-- CI (FB-78): a collapsible section's title is a heading holding the toggle button (the
+             disclosure pattern); the actions slot sits beside it and never toggles. -->
         <PropertySectionTitle
           v-if="collapsible"
-          as="button"
-          type="button"
+          role="heading"
+          aria-level="3"
           :class="styles.title({ class: ui?.title })"
-          :aria-expanded="isOpen ? 'true' : 'false'"
-          :aria-controls="bodyId"
-          data-slot="section-toggle"
-          @click="actions.toggle()"
         >
-          <icon-lucide-chevron-down
-            v-if="isOpen"
-            :class="styles.chevron({ class: ui?.chevron })"
-            aria-hidden="true"
-          />
-          <icon-lucide-chevron-right
-            v-else
-            :class="styles.chevron({ class: ui?.chevron })"
-            aria-hidden="true"
-          />
-          <span role="heading" aria-level="3" class="shrink-0">{{ label }}</span>
-          <span
-            v-if="!isOpen && collapsedSummary"
-            :class="styles.summary({ class: ui?.summary })"
-            :title="collapsedSummary"
-            data-slot="section-summary"
-            >· {{ collapsedSummary }}</span
+          <button
+            type="button"
+            :class="styles.toggle({ class: ui?.toggle })"
+            :aria-expanded="isOpen ? 'true' : 'false'"
+            :aria-controls="bodyId"
+            data-slot="section-toggle"
+            @click="actions.toggle()"
           >
+            <icon-lucide-chevron-down
+              v-if="isOpen"
+              :class="styles.chevron({ class: ui?.chevron })"
+              aria-hidden="true"
+            />
+            <icon-lucide-chevron-right
+              v-else
+              :class="styles.chevron({ class: ui?.chevron })"
+              aria-hidden="true"
+            />
+            <span class="shrink-0">{{ label }}</span>
+            <span
+              v-if="!isOpen && collapsedSummary"
+              :class="styles.summary({ class: ui?.summary })"
+              :title="collapsedSummary"
+              data-slot="section-summary"
+              >· {{ collapsedSummary }}</span
+            >
+          </button>
         </PropertySectionTitle>
         <PropertySectionTitle v-else :class="styles.title({ class: ui?.title })">
           <span role="heading" aria-level="3">{{ label }}</span>

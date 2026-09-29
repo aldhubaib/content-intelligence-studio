@@ -18,6 +18,7 @@ import {
   TEMPLATE_ID,
   VOCABULARY_OLDER,
   installAPI,
+  openBindings,
   type SavedBody
 } from './hosted-api'
 
@@ -191,14 +192,20 @@ test.describe('hosted mode — preview with real content', () => {
     )
 
     // The Bindings panel lists the two names as optional, present bindings.
+    // FB-78 (H-72): the section opens collapsed (Usable, cover met) and Brand text is its own
+    // collapsed disclosure — open both to read the rows; the chip names the layer's role frame.
+    await openBindings(page)
     const brandText = page.getByTestId('ci-brand-text')
     await expect(brandText).toBeVisible()
     await expect(brandText).toContainText('Brand text')
+    await expect(brandText).toHaveAttribute('data-open', 'false')
+    await brandText.getByRole('button', { name: 'Brand text' }).click()
+    await expect(brandText).toHaveAttribute('data-open', 'true')
     await expect(page.getByTestId('ci-brand-text-display-name')).toHaveAttribute(
       'data-present',
       'true'
     )
-    await expect(page.getByTestId('ci-brand-text-jump-handle')).toHaveText('added')
+    await expect(page.getByTestId('ci-brand-text-jump-handle')).toHaveText('cover')
     await expect(page.getByTestId('ci-bindings-usable')).toHaveAttribute('data-usable', 'true')
 
     // Selecting the layer shows its own words; deselecting brings the kit's text back.
