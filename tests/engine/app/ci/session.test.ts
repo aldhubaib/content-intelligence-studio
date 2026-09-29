@@ -14,6 +14,8 @@ import {
 } from '@/app/ci/api'
 import { DEFAULT_VOCABULARY } from '@/app/ci/bindings'
 import { serializeGraph } from '@/app/ci/document'
+import type { EmojiFaceResult } from '@/app/ci/emoji-face'
+import type { HostedFontReport } from '@/app/ci/fonts'
 import { hostedToken, type HostedConfig } from '@/app/ci/hosted'
 import type { HostBridge, HostToStudioMessage, StudioToHostMessage } from '@/app/ci/protocol'
 import {
@@ -23,7 +25,8 @@ import {
   RENAME_DEBOUNCE_MS,
   saveStateWords,
   type AutosaveScheduler,
-  type HostedSession
+  type HostedSession,
+  type HostedSessionOptions
 } from '@/app/ci/session'
 import { answerClosePrompt, closePrompt } from '@/app/document/close/prompt'
 import { createEditorStore, type EditorStore } from '@/app/editor/session'
@@ -302,6 +305,8 @@ async function booted(
   options: {
     config?: Partial<HostedConfig> & { previewCandidateId?: string | null }
     beforeLoad?: (remote: ReturnType<typeof fakeAPI>) => void
+    /** H-71: run the font steps with these injected installers instead of skipping them. */
+    fonts?: HostedSessionOptions['fonts']
   } = {}
 ) {
   const store = createEditorStore()
@@ -330,7 +335,8 @@ async function booted(
     bridge: host.bridge,
     autosave: clock,
     skipBrandLibrary: true,
-    skipFonts: true,
+    skipFonts: !options.fonts,
+    fonts: options.fonts,
     applyAI: (ai) => aiApplied.push(ai),
     setTitle: (title) => titles.push(title),
     hint: (message) => hints.push(message)
@@ -626,7 +632,8 @@ describe('hosted session', () => {
   test('FB-55: a refused rename (name taken) puts the sentence under the name and keeps the old name; the next accepted rename clears it', async () => {
     const { store, host, remote, session } = await booted()
     const before = store.state.documentName
-    const sentence = 'A template named Landscape card already exists in this workspace. Choose another name.'
+    const sentence =
+      'A template named Landscape card already exists in this workspace. Choose another name.'
     remote.failRename(new StudioNameTakenError(sentence))
     store.state.documentName = 'Landscape card'
     await new Promise((resolve) => {
@@ -795,6 +802,115 @@ describe('hosted session', () => {
       expect(session.preview.overlay.content.value).toEqual({ kind: 'none' })
       expect(titleOf(store).text).toBe('Title placeholder')
     })
+  })
+})
+
+describe('H-71: the emoji face in the hosted editor', () => {
+  const REGISTERED: EmojiFaceResult = {
+    registered: true,
+    family: 'Noto Color Emoji',
+    style: 'Regular',
+    bytes: 7_358_636,
+    alreadyLoaded: false
+  }
+  const MISSING: EmojiFaceResult = {
+    registered: false,
+    family: 'Noto Color Emoji',
+    style: 'Regular',
+    message: 'HTTP 404'
+  }
+
+  /** Injected font steps that record their order and let the test settle the emoji fetch by hand. */
+  function fontSteps(answer: EmojiFaceResult) {
+    const order: string[] = []
+    let settleEmoji: (() => void) | null = null
+    const emojiSettled = new Promise<void>((resolve) => {
+      settleEmoji = resolve
+    })
+    const fonts: NonNullable<HostedSessionOptions['fonts']> = {
+      install: async (_api, fontsList) => {
+        order.push('brand-fonts')
+        const report: HostedFontReport = {
+          registered: fontsList.map((f) => `${f.family}|${f.weight}`),
+          failed: [],
+          emojiFace: false
+        }
+        return report
+      },
+      installEmojiFace: async (options) => {
+        order.push('emoji-face:start')
+        expect(options?.signal).toBeInstanceOf(AbortSignal)
+        await emojiSettled
+        order.push('emoji-face:done')
+        return answer
+      }
+    }
+    return {
+      fonts,
+      order,
+      settle() {
+        settleEmoji?.()
+      }
+    }
+  }
+
+  test('the face is asked for AFTER the brand fonts and never blocks the load; once it lands the report flips and the canvas re-shapes once', async () => {
+    const steps = fontSteps(REGISTERED)
+    const { store, session } = await booted(payload(), { fonts: steps.fonts })
+    let renders = 0
+    store.requestRender = () => {
+      renders++
+    }
+    // The load is over while the emoji fetch is still in flight.
+    expect(session.status.value).toEqual({ kind: 'ready' })
+    expect(steps.order).toEqual(['brand-fonts', 'emoji-face:start'])
+    expect(session.fontReport.value).toEqual({ registered: [], failed: [], emojiFace: false })
+    expect(session.emojiFace.value).toBeNull()
+
+    steps.settle()
+    await settle()
+    expect(steps.order).toEqual(['brand-fonts', 'emoji-face:start', 'emoji-face:done'])
+    expect(session.emojiFace.value).toEqual(REGISTERED)
+    expect(session.fontReport.value?.emojiFace).toBe(true)
+    // ONE "fonts arrived" redraw; the document itself is untouched.
+    expect(renders).toBe(1)
+    expect(session.dirty.value).toBe(false)
+    expect(session.saveState.value).toEqual({ kind: 'saved', version: 4 })
+  })
+
+  test('a missing face leaves the report at false, asks for no redraw and the editor goes on', async () => {
+    const steps = fontSteps(MISSING)
+    const { store, session } = await booted(payload(), { fonts: steps.fonts })
+    let renders = 0
+    store.requestRender = () => {
+      renders++
+    }
+    steps.settle()
+    await settle()
+    expect(session.emojiFace.value).toEqual(MISSING)
+    expect(session.fontReport.value?.emojiFace).toBe(false)
+    expect(renders).toBe(0)
+    expect(session.status.value).toEqual({ kind: 'ready' })
+    expect(await session.saveVersion()).toBe(true)
+  })
+
+  test('skipFonts skips the emoji face with the brand fonts; a disposed session ignores a late answer', async () => {
+    const skipped = await booted()
+    expect(skipped.session.fontReport.value).toBeNull()
+    expect(skipped.session.emojiFace.value).toBeNull()
+
+    const steps = fontSteps(REGISTERED)
+    const late = await booted(payload(), { fonts: steps.fonts })
+    let renders = 0
+    late.store.requestRender = () => {
+      renders++
+    }
+    late.session.dispose()
+    steps.settle()
+    await settle()
+    expect(late.session.emojiFace.value).toBeNull()
+    expect(late.session.fontReport.value?.emojiFace).toBe(false)
+    expect(renders).toBe(0)
   })
 })
 
