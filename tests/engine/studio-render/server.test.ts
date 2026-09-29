@@ -216,6 +216,79 @@ describe('handleRequest', () => {
     expect(res.headers.get('x-render-frame')).toBeTruthy()
   }, 30_000)
 
+  test('H-69 emoji fallback face: 💪🏼✨ in the brand text renders in colour under the strict policy — ready, no 422; healthz says emojiFace', async () => {
+    const opts = options()
+    const base = (await fixtureDocument()) as {
+      graph: { nodes: Array<[string, { type?: string; name?: string; text?: string }]> }
+    }
+    const withBody = (text: string): unknown => {
+      const doc = structuredClone(base)
+      for (const [, node] of doc.graph.nodes) {
+        if (node.type === 'TEXT' && node.name === 'content:title') node.text = text
+      }
+      return doc
+    }
+
+    const emoji = await handleRequest(
+      post({ document: withBody('قوة 💪🏼✨ 👨‍👩‍👧 1️⃣'), format: 'png', scale: 1 }),
+      opts
+    )
+    expect(emoji.status).toBe(200)
+    const report = JSON.parse(emoji.headers.get('x-render-report') ?? '{}') as {
+      textReadiness?: Record<string, string>
+      fontIssues?: string[]
+      emojiFallback?: boolean
+    }
+    expect(report.textReadiness).toEqual({ 'content:title': 'ready' })
+    expect(report.fontIssues).toEqual([])
+    expect(report.emojiFallback).toBe(true)
+
+    // Colour, not tofu: the emoji raster carries warm pixels the white-on-frame title never produces.
+    const plain = await handleRequest(
+      post({ document: withBody('قوة كل يوم'), format: 'png', scale: 1 }),
+      opts
+    )
+    expect(plain.status).toBe(200)
+    const { default: CanvasKitInit } = await import('canvaskit-wasm/full')
+    const binDir = decodeURIComponent(
+      new URL('.', import.meta.resolve('canvaskit-wasm/full')).pathname
+    )
+    const ck = await CanvasKitInit({ locateFile: (file: string) => binDir + file })
+    const warmPixels = (png: Uint8Array): number => {
+      const image = ck.MakeImageFromEncoded(png)
+      if (!image) throw new Error('PNG did not decode')
+      const pixels = image.readPixels(0, 0, {
+        width: image.width(),
+        height: image.height(),
+        colorType: ck.ColorType.RGBA_8888,
+        alphaType: ck.AlphaType.Unpremul,
+        colorSpace: ck.ColorSpace.SRGB
+      }) as Uint8Array
+      image.delete()
+      let warm = 0
+      for (let i = 0; i < pixels.length; i += 4) {
+        if ((pixels[i + 3] ?? 0) > 200 && (pixels[i] ?? 0) - (pixels[i + 2] ?? 0) > 80) warm += 1
+      }
+      return warm
+    }
+    const emojiWarm = warmPixels(new Uint8Array(await emoji.arrayBuffer()))
+    const plainWarm = warmPixels(new Uint8Array(await plain.arrayBuffer()))
+    expect(emojiWarm - plainWarm).toBeGreaterThan(50)
+
+    // The face widens coverage to emoji ONLY: a glyph nothing in the chain carries is still a 422.
+    const armenian = await handleRequest(
+      post({ document: withBody('Ա'), format: 'png', scale: 1 }),
+      opts
+    )
+    expect(armenian.status).toBe(422)
+    expect((await bodyOf(armenian)).error).toBe('fonts_not_ready')
+
+    const health = await bodyOf(
+      await handleRequest(new Request('http://sidecar/internal/healthz'), opts)
+    )
+    expect(health.emojiFace).toBe(true)
+  }, 60_000)
+
   test('422 for a document that is not the envelope and for an unknown frame', async () => {
     const opts = options()
     const notDoc = await handleRequest(
@@ -244,6 +317,7 @@ describe('handleRequest', () => {
       engineVersion: '0.15.1',
       fontIssues: ['Brand Latin Bold (missing)'],
       textReadiness: { 'slot:headline': 'substituted' },
+      emojiFallback: true,
       timings: { canvasKitMs: 0, parseMs: 0, fontsMs: 0, renderMs: 0 }
     })
     const strict = await handleRequest(
@@ -301,7 +375,9 @@ describe('handleRequest — lifetime (INC-13)', () => {
     )
     expect(posted.status).toBe(405)
     const res = await handleRequest(
-      new Request('http://sidecar/internal/health', { headers: { authorization: `Bearer ${SECRET}` } }),
+      new Request('http://sidecar/internal/health', {
+        headers: { authorization: `Bearer ${SECRET}` }
+      }),
       opts
     )
     expect(res.status).toBe(200)
@@ -314,7 +390,9 @@ describe('handleRequest — lifetime (INC-13)', () => {
     expect(typeof body.uptimeSec).toBe('number')
     renders = 8
     const unconfigured = await handleRequest(
-      new Request('http://sidecar/internal/health', { headers: { authorization: `Bearer ${SECRET}` } }),
+      new Request('http://sidecar/internal/health', {
+        headers: { authorization: `Bearer ${SECRET}` }
+      }),
       options({ stats, secret: null })
     )
     expect(unconfigured.status).toBe(503)
@@ -346,7 +424,9 @@ describe('handleRequest — lifetime (INC-13)', () => {
     })
     expect(renders).toBe(2)
     const health = await handleRequest(
-      new Request('http://sidecar/internal/health', { headers: { authorization: `Bearer ${SECRET}` } }),
+      new Request('http://sidecar/internal/health', {
+        headers: { authorization: `Bearer ${SECRET}` }
+      }),
       opts
     )
     expect(((await health.json()) as { ok: boolean }).ok).toBe(false)
@@ -354,11 +434,17 @@ describe('handleRequest — lifetime (INC-13)', () => {
 
   test('heap exhaustion answers 503 render_unavailable and exits 70 — never 500', async () => {
     const render: SidecarOptions['render'] = async () => {
-      throw Object.assign(new Error('[studio-render] CanvasKit could not create the export surface'), {
-        code: 'surface_exhausted'
-      })
+      throw Object.assign(
+        new Error('[studio-render] CanvasKit could not create the export surface'),
+        {
+          code: 'surface_exhausted'
+        }
+      )
     }
-    const stats: SidecarOptions['stats'] = () => ({ renders: 41, heapBytes: 2 * 1024 * 1024 * 1024 })
+    const stats: SidecarOptions['stats'] = () => ({
+      renders: 41,
+      heapBytes: 2 * 1024 * 1024 * 1024
+    })
     const { lifecycle, calls } = fakeLifecycle({ maxRenders: 0 })
     const opts = options({ render, stats, lifecycle })
     const res = await handleRequest(post({ document: {}, format: 'png', scale: 1 }), opts)

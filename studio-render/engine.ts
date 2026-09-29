@@ -17,6 +17,14 @@ import { fontManager, prepareGraphFonts, weightToStyle } from '@open-pencil/core
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 
 import { deserializeGraph } from '../src/app/ci/document'
+import {
+  EMOJI_FALLBACK_FAMILY,
+  EMOJI_FALLBACK_FONT_FILE,
+  EMOJI_FALLBACK_FONT_PACKAGE,
+  EMOJI_FALLBACK_STYLE,
+  emojiFaceMissingIssue,
+  readEmojiFallbackFace
+} from './emoji-face'
 
 export const ENGINE_VERSION = '0.15.1'
 
@@ -45,6 +53,8 @@ export interface RenderReport {
   engineVersion: string
   fontIssues: string[]
   textReadiness: Record<string, FontReadiness>
+  /** H-69: was the bundled emoji face the last family of every paragraph in this render? */
+  emojiFallback: boolean
   timings: {
     canvasKitMs: number
     parseMs: number
@@ -140,6 +150,10 @@ async function headlessRenderer(): Promise<{ ck: CanvasKit; renderer: SkiaRender
     if (await fontManager.loadFont('Noto Naskh Arabic', 'Regular')) {
       fontManager.setArabicFallbackFamily('Noto Naskh Arabic')
     }
+    // CI: the bundled colour emoji face is the LAST family of every paragraph (H-69) — the one
+    // glyph class the merged brand faces never carry. Missing bytes are logged once and the boot
+    // goes on; a node with emoji then answers 422 `fonts_not_ready` naming the face.
+    await registerEmojiFallbackFace()
     engineReady = true
     readyEngine = { ck, renderer }
     return readyEngine
@@ -159,6 +173,66 @@ export function warmEngine(): Promise<void> {
 export function engineState(): 'cold' | 'warming' | 'ready' {
   if (!canvasKit) return 'cold'
   return engineReady ? 'ready' : 'warming'
+}
+
+// ---------------------------------------------------------------------------
+// Emoji fallback face (H-69) — registered once per process, last in the chain
+// ---------------------------------------------------------------------------
+
+let emojiFaceState: 'unread' | 'registered' | 'missing' = 'unread'
+
+async function registerEmojiFallbackFace(): Promise<void> {
+  if (fontManager.isStyleLoaded(EMOJI_FALLBACK_FAMILY, EMOJI_FALLBACK_STYLE)) {
+    emojiFaceState = 'registered'
+    return
+  }
+  try {
+    const bytes = await readEmojiFallbackFace()
+    fontManager.markLoaded(EMOJI_FALLBACK_FAMILY, EMOJI_FALLBACK_STYLE, bytes, 'registered')
+    // Core has no emoji fallback list of its own; the CJK slot is the last one
+    // `resolveParagraphFontFamilies` appends (after the primary face, Inter and
+    // the Arabic fallbacks), so a glyph nothing earlier covers lands here and a
+    // glyph the brand face has never does.
+    fontManager.setCJKFallbackFamily(EMOJI_FALLBACK_FAMILY)
+    emojiFaceState = 'registered'
+  } catch (error) {
+    emojiFaceState = 'missing'
+    console.warn(
+      JSON.stringify({
+        event: 'emoji-face-missing',
+        file: `${EMOJI_FALLBACK_FONT_PACKAGE}/${EMOJI_FALLBACK_FONT_FILE}`,
+        message: error instanceof Error ? error.message : String(error)
+      })
+    )
+  }
+}
+
+/** Is the emoji fallback face part of this process's paragraph chain? (Health + the report read it.) */
+export function emojiFaceRegistered(): boolean {
+  return (
+    emojiFaceState === 'registered' ||
+    fontManager.isStyleLoaded(EMOJI_FALLBACK_FAMILY, EMOJI_FALLBACK_STYLE)
+  )
+}
+
+/**
+ * The engine's `fontIssues` lines plus, for every text node that settled
+ * `exhausted` while the face is NOT registered and carries emoji, one line
+ * naming the face — so the 422 reads as "deploy the face", not a brand gap.
+ */
+function fontIssueLines(
+  status: { issues: Array<{ family: string; style: string; status: string }> },
+  nodes: readonly SceneNode[],
+  readiness: Record<string, FontReadiness>
+): string[] {
+  const lines = status.issues.map((face) => `${face.family} ${face.style} (${face.status})`)
+  if (emojiFaceRegistered()) return lines
+  for (const node of nodes) {
+    if (readiness[node.name] !== 'exhausted') continue
+    const line = emojiFaceMissingIssue(node.name, node.text ?? '')
+    if (line && !lines.includes(line)) lines.push(line)
+  }
+  return lines
 }
 
 // ---------------------------------------------------------------------------
@@ -260,16 +334,21 @@ function renderFrameDirect(
  * fires the demand on the first readiness probe, so a one-shot export probes
  * every text node and waits for the resolver to settle. Bounded poll.
  */
+/** The frame's text nodes the readiness poll and the issue lines both walk (same traversal, keyed by layer name). */
+function frameTextNodes(graph: SceneGraph, rootId: string): SceneNode[] {
+  return graph
+    .flattenTree(rootId)
+    .map(({ node }) => node)
+    .filter((node) => node.type === 'TEXT' && node.text)
+}
+
 async function awaitTextReadiness(
   renderer: SkiaRenderer,
   graph: SceneGraph,
   rootId: string,
   deadlineMs = 3000
 ): Promise<Record<string, FontReadiness>> {
-  const textNodes = graph
-    .flattenTree(rootId)
-    .map(({ node }) => node)
-    .filter((node) => node.type === 'TEXT' && node.text)
+  const textNodes = frameTextNodes(graph, rootId)
   const started = performance.now()
   for (;;) {
     const readiness: Record<string, FontReadiness> = {}
@@ -408,8 +487,9 @@ async function renderNow(input: RenderInput): Promise<RenderReport> {
     frameId: frame.id,
     mode,
     engineVersion: ENGINE_VERSION,
-    fontIssues: status.issues.map((face) => `${face.family} ${face.style} (${face.status})`),
+    fontIssues: fontIssueLines(status, frameTextNodes(graph, frame.id), textReadiness),
     textReadiness,
+    emojiFallback: emojiFaceRegistered(),
     timings: {
       canvasKitMs: t1 - t0,
       parseMs: t2 - t1,
