@@ -73,7 +73,10 @@ const horizontalSplitterStyles = tv(splitterTheme)({ direction: 'horizontal' })
       :max-size="30"
       class="flex flex-col"
     >
-      <!-- CI: no collab / Share / account in the hosted Studio (ADR-058 §8); the Bindings panel takes the spot (FB-44 §3). -->
+      <!-- CI: no collab / Share / account in the hosted Studio (ADR-058 §8); the Bindings panel takes the spot (FB-44 §3).
+           FB-78 (PATCHES H-72): the Bindings section is collapsible and bounded to 45 % of this column
+           (its own `max-h` + scrolling body — no `shrink-0`), so the PropertiesPanel below always keeps
+           at least half of it. -->
       <div
         v-if="!CI_STUDIO && !hosted"
         class="flex shrink-0 items-center justify-between border-b border-border px-1.5 py-1.5"

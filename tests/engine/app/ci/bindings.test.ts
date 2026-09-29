@@ -340,8 +340,8 @@ describe('bindingsReport', () => {
       ['brand:handle', 'handle', "the brand kit's handle as @handle", 2]
     ])
     expect(rows[1]?.layers.map((l) => l.frameId !== null)).toEqual([true, false])
-    expect(BRAND_TEXT_COPY.present(1)).toBe('added')
-    expect(BRAND_TEXT_COPY.present(2)).toBe('added 2 times')
+    // FB-78 (H-72): no count word on a row — the copy carries no `present(n)` any more.
+    expect(Object.keys(BRAND_TEXT_COPY).sort()).toEqual(['heading', 'lead', 'notAdded'])
 
     const older = { ...DEFAULT_VOCABULARY, brandText: undefined }
     expect(brandTextRows(bindingsReport(graph, older, FORMAT), older)).toEqual([])

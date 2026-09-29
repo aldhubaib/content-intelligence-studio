@@ -2,9 +2,15 @@
      Track FB-61 (PATCHES H-67): the format-aware checklist — one row per contract role, the helper
      sentence, and one yellow line per role frame the format never renders.
      Track FB-69 (PATCHES H-68): the **Brand text** rows — brand:display-name / brand:handle as optional
-     text bindings, present only when the app's vocabulary lists them. -->
+     text bindings, present only when the app's vocabulary lists them.
+     FB-78 (PATCHES H-72): the section is a real toggle — collapsed by default when Usable and every
+     contract row is met, open when something is not met or nothing is bound yet, the person's toggle
+     remembered per browser; open it is bounded to 45 % of the inspector column with its own scroll so
+     the design inspector below always keeps at least half; the collapsed header carries the verdict;
+     **Add role frame ▾** and the Shape row stay reachable while collapsed. -->
 <script setup lang="ts">
-import { computed } from 'vue'
+import { useLocalStorage } from '@vueuse/core'
+import { computed, ref, watch } from 'vue'
 
 import {
   BRAND_TEXT_COPY,
@@ -17,10 +23,19 @@ import {
   type BindingRef,
   type RoleReport
 } from '@/app/ci/bindings'
+import {
+  BINDINGS_OPEN_STORAGE_KEY,
+  bindingsDefaultOpen,
+  brandTextChipWords,
+  parseStoredBindingsOpen,
+  resolveBindingsOpen,
+  serializeBindingsOpen
+} from '@/app/ci/bindings-panel'
 import { hostedSession } from '@/app/ci/boot'
 import { contractChecklist, contractOf } from '@/app/ci/contract'
 import AddRoleFrameMenu from '@/components/ci/AddRoleFrameMenu.vue'
 import ShapeControl from '@/components/ci/ShapeControl.vue'
+import AppCollapsible from '@/components/ui/collapsible/AppCollapsible.vue'
 import AppAlert from '@/components/ui/feedback/AppAlert.vue'
 import PanelItemRow from '@/components/ui/panel/PanelItemRow.vue'
 import PanelSection from '@/components/ui/panel/PanelSection.vue'
@@ -62,6 +77,15 @@ const brandText = computed(() =>
       )
     : []
 )
+// FB-78 (H-72): the Brand text block is its own inline disclosure, collapsed by default (this page
+// only — the person's Bindings toggle is the one remembered); the collapsed row counts the names present.
+const brandTextOpen = ref(false)
+const brandTextSummary = computed(() => {
+  const present = brandText.value.filter((row) => row.layers.length > 0).length
+  return `${present} of ${brandText.value.length} added`
+})
+/** Every role's frame id, so a chip can name the frame that holds its layer. */
+const allRoles = computed<RoleReport[]>(() => report.value?.roles ?? [])
 
 /** Non-blocking shape problems (duplicates, wrong layer type) — warnings, listed once. */
 const warnings = computed(() =>
@@ -74,6 +98,32 @@ const warnings = computed(() =>
     )
   )
 )
+
+// FB-78 (PATCHES H-72): the section's open state. A stored toggle wins (the Studio's own key, the
+// same `useLocalStorage` idiom as the theme preference — nothing is written until the person
+// toggles); otherwise the default is judged ONCE when the document has loaded (collapsed when
+// Usable + every row met, open when something is not met or nothing is bound yet) and never flips
+// under the person while they work.
+const stored = useLocalStorage<string>(BINDINGS_OPEN_STORAGE_KEY, '', { writeDefaults: false })
+const open = ref(true)
+const openDecided = ref(false)
+watch(
+  () => [status.value.kind, report.value] as const,
+  ([kind, current]) => {
+    if (openDecided.value || kind === 'loading' || !current) return
+    openDecided.value = true
+    open.value = resolveBindingsOpen(
+      parseStoredBindingsOpen(stored.value),
+      bindingsDefaultOpen(current, checklist.value)
+    )
+  },
+  { immediate: true }
+)
+function setOpen(next: boolean): void {
+  open.value = next
+  openDecided.value = true
+  stored.value = serializeBindingsOpen(next)
+}
 
 const statusLine = computed(() => {
   const s = status.value
@@ -124,30 +174,45 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
 </script>
 
 <template>
+  <!-- FB-78 (H-72): the section is bounded to 45 % of the inspector column — `max-h-[45%]` on the
+       section, the body scrolls (`ui.body`) — so the design inspector below always keeps ≥ half. -->
   <PanelSection
     v-if="session"
     label="Bindings"
+    collapsible
+    :open="open"
+    :collapsed-summary="statusWords"
     data-test-id="ci-bindings-panel"
-    class="shrink-0 border-b border-border"
+    :data-open="open ? 'true' : 'false'"
+    class="flex max-h-[45%] min-h-0 flex-col border-b border-border pb-0"
+    :ui="{
+      header: 'shrink-0',
+      actions: 'w-auto',
+      body: 'min-h-0 flex-1 overflow-y-auto pb-3 data-[state=closed]:hidden'
+    }"
+    @update:open="setOpen"
   >
+    <template #actions>
+      <AddRoleFrameMenu :tick="tick" />
+    </template>
+    <template #pinned>
+      <!-- FB-58: Rectangle · Circle for the selected brand:* / content image layer — pinned under the
+           header (FB-78) so the switch is reachable while the section is collapsed. -->
+      <ShapeControl :tick="tick" />
+    </template>
     <p class="px-2 pb-1 text-[11px] text-muted" data-test-id="ci-bindings-status" role="status">
       {{ statusLine }}
     </p>
-    <div class="flex items-center gap-2 px-2 pb-1.5">
-      <p
-        class="min-w-0 flex-1 truncate text-[11px]"
-        :class="usable ? 'text-surface' : 'text-warning-text'"
-        data-test-id="ci-bindings-usable"
-        :data-usable="usable ? 'true' : 'false'"
-        :data-carousel="carousel ? 'true' : 'false'"
-        role="status"
-      >
-        {{ statusWords }}
-      </p>
-      <AddRoleFrameMenu :tick="tick" />
-    </div>
-    <!-- FB-58: Rectangle · Circle for the selected brand:* / content image layer. -->
-    <ShapeControl :tick="tick" />
+    <p
+      class="min-w-0 truncate px-2 pb-1.5 text-[11px]"
+      :class="usable ? 'text-surface' : 'text-warning-text'"
+      data-test-id="ci-bindings-usable"
+      :data-usable="usable ? 'true' : 'false'"
+      :data-carousel="carousel ? 'true' : 'false'"
+      role="status"
+    >
+      {{ statusWords }}
+    </p>
     <!-- Track FB-61: the format's contract as a checklist, then the one helper sentence. -->
     <ul
       v-if="checklist.length > 0"
@@ -263,9 +328,24 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
         </PanelItemRow>
       </li>
     </ul>
-    <!-- Track FB-69: the brand kit's text names — optional, never part of the usable verdict. -->
-    <div v-if="brandText.length > 0" class="px-2 pt-1 pb-1" data-test-id="ci-brand-text">
-      <p class="text-[11px] font-semibold text-surface">{{ BRAND_TEXT_COPY.heading }}</p>
+    <!-- Track FB-69: the brand kit's text names — optional, never part of the usable verdict.
+         FB-78 (H-72): its own inline disclosure, collapsed by default; one chip PER LAYER named by
+         the role frame that holds it (a layer outside every role frame reads its layer name); the
+         count word is the row's sr-only summary only. -->
+    <AppCollapsible
+      v-if="brandText.length > 0"
+      v-model:open="brandTextOpen"
+      :label="BRAND_TEXT_COPY.heading"
+      class="px-2 pt-1 pb-1"
+      :ui="{ trigger: 'h-6 text-[11px] font-semibold', content: 'pt-0.5' }"
+      data-test-id="ci-brand-text"
+      :data-open="brandTextOpen ? 'true' : 'false'"
+    >
+      <template #actions>
+        <span class="text-[10px] text-muted" data-test-id="ci-brand-text-count">
+          {{ brandTextSummary }}
+        </span>
+      </template>
       <p class="text-[10px] text-muted">{{ BRAND_TEXT_COPY.lead }}</p>
       <ul class="flex flex-col gap-0.5 pt-1" :aria-label="BRAND_TEXT_COPY.heading">
         <li
@@ -284,11 +364,12 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
               :key="binding.nodeId"
               type="button"
               class="max-w-44 truncate rounded bg-hover/60 px-1.5 py-0.5 text-[10px] text-surface hover:bg-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-accent"
-              :aria-label="`Jump to ${binding.nodeName}`"
+              :aria-label="`Jump to ${row.name} in ${brandTextChipWords(binding, allRoles)}`"
+              :title="binding.nodeName"
               :data-test-id="`ci-brand-text-jump-${row.slot}`"
               @click="jumpTo(binding)"
             >
-              {{ BRAND_TEXT_COPY.present(row.layers.length) }}
+              {{ brandTextChipWords(binding, allRoles) }}
             </button>
           </template>
           <span v-else class="text-muted" :data-test-id="`ci-brand-text-words-${row.slot}`">
@@ -297,7 +378,7 @@ function reasonWords(reason: RoleReport['reasons'][number]): string {
           <span v-if="row.description" class="basis-full text-muted">{{ row.description }}</span>
         </li>
       </ul>
-    </div>
+    </AppCollapsible>
     <div v-if="strays.length > 0" class="px-2 pt-1 pb-1.5" data-test-id="ci-bindings-strays">
       <p class="text-[10px] text-muted">Outside every role frame — never rendered:</p>
       <div class="flex flex-wrap gap-1 pt-1">

@@ -19,6 +19,7 @@ import {
   TEMPLATES_URL,
   installAPI,
   installAppPages,
+  openBindings,
   type SavedBody
 } from './hosted-api'
 
@@ -43,7 +44,15 @@ test.describe('hosted mode', () => {
 
     const status = page.getByTestId('ci-bindings-status')
     await expect(status).toHaveText('All changes saved.')
+    // Focus lands in the Studio on load — checked before anything in the panel is clicked
+    // (FB-78: opening the Bindings section moves focus to its header toggle, as a button should).
+    expect(
+      await page.evaluate(() => document.activeElement?.getAttribute('data-test-id') ?? null)
+    ).toBe('canvas-element')
     // FB-44 §3: the Bindings panel — cover OK with its two layers, repeat / ending not added.
+    // FB-78 (H-72): Usable + every row met → the section opens collapsed; open it to read the body.
+    await expect(page.getByTestId('ci-bindings-panel')).toHaveAttribute('data-open', 'false')
+    await openBindings(page)
     await expect(page.getByTestId('ci-bindings-usable')).toHaveAttribute('data-usable', 'true')
     await expect(page.getByTestId('ci-bindings-usable')).toHaveText('Usable')
     await expect(page.getByTestId('ci-role-cover')).toHaveAttribute('data-status', 'ok')
@@ -69,10 +78,6 @@ test.describe('hosted mode', () => {
     )
     await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v3')
     await expect(page.getByTestId('ci-title-draft')).toHaveCount(0)
-    // Focus lands in the Studio on load.
-    expect(
-      await page.evaluate(() => document.activeElement?.getAttribute('data-test-id') ?? null)
-    ).toBe('canvas-element')
 
     // Visual artefact for the review: frame, cover and the Arabic headline painted
     // with the bundled Noto Naskh Arabic fallback (no CDN in hosted mode).
