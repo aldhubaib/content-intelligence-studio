@@ -17,7 +17,10 @@
 //     503 render_busy          one render runs at a time and STUDIO_RENDER_QUEUE_MAX renders
 //                              already wait; `{ retryAfterMs }` + `Retry-After` say when — S-11
 //     500 render_failed        the engine threw
-//   GET  /internal/healthz     { ok, engine, canvasKit, configured, fontsCached }   (no bearer)
+//   GET  /internal/healthz     { ok, engine, canvasKit, configured, fontsCached, emojiFace }   (no bearer)
+//                              `emojiFace` (H-69): the bundled Noto Color Emoji is the last family of
+//                              every paragraph — `false` while cold or when the image lacks the package.
+//                              `X-Render-Report` carries the same fact as `emojiFallback`.
 //   GET  /internal/health      Authorization: Bearer <STUDIO_INTERNAL_SECRET>
 //                              { ok, engineVersion, renders, rssMb, heapMb, uptimeSec, queue }
 //   GET  /healthz/render       { ok, renders, uptimeSec, inFlight, waiting }   (no bearer; nginx

@@ -25,6 +25,7 @@
 import {
   ENGINE_VERSION,
   RenderInputError,
+  emojiFaceRegistered,
   engineState,
   engineStats,
   renderDocument,
@@ -90,7 +91,9 @@ export function readOptions(
     port: Math.floor(number('STUDIO_RENDER_PORT', 8788)),
     host: env.STUDIO_RENDER_HOST?.trim() || '127.0.0.1',
     warm: (env.STUDIO_RENDER_WARM ?? '1') !== '0',
-    maxRenders: Math.floor(number('STUDIO_RENDER_MAX_RENDERS', DEFAULT_MAX_RENDERS, { allowZero: true })),
+    maxRenders: Math.floor(
+      number('STUDIO_RENDER_MAX_RENDERS', DEFAULT_MAX_RENDERS, { allowZero: true })
+    ),
     queueMax: Math.floor(number('STUDIO_RENDER_QUEUE_MAX', DEFAULT_QUEUE_MAX, { allowZero: true }))
   }
 }
@@ -136,7 +139,9 @@ function healthResponse(options: SidecarOptions): Response {
     engine: ENGINE_VERSION,
     canvasKit: engineState(),
     configured: Boolean(options.secret),
-    fontsCached: options.fontCache.size
+    fontsCached: options.fontCache.size,
+    // H-69: the bundled emoji face — `false` until the engine warmed, or when the image lacks the package.
+    emojiFace: emojiFaceRegistered()
   })
 }
 
@@ -194,7 +199,12 @@ function drainingResponse(lifecycle: SidecarLifecycle): Response {
 /** S-11: the queue is full — say when to come back, in the body and in `Retry-After`. */
 function busyResponse(retryAfterMs: number, options: SidecarOptions): Response {
   const facts = queueFacts(options.queue)
-  options.log?.({ event: 'render.busy', waiting: facts.waiting, capacity: facts.capacity, retryAfterMs })
+  options.log?.({
+    event: 'render.busy',
+    waiting: facts.waiting,
+    capacity: facts.capacity,
+    retryAfterMs
+  })
   return json(
     503,
     {
@@ -266,6 +276,7 @@ async function renderResponse(
       mode: report.mode,
       fontIssues: report.fontIssues,
       textReadiness: report.textReadiness,
+      emojiFallback: report.emojiFallback,
       timings: report.timings
     }
     const problem = fontReadinessProblem(report.textReadiness, report.fontIssues)

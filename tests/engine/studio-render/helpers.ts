@@ -30,6 +30,7 @@ export interface JSONBody {
   engine?: string
   configured?: boolean
   canvasKit?: string
+  emojiFace?: boolean
   error?: string
   message?: string
   missing?: string[]
@@ -49,6 +50,7 @@ export const fakeReport = (): Awaited<ReturnType<NonNullable<SidecarOptions['ren
   engineVersion: '0.15.1',
   fontIssues: [],
   textReadiness: {},
+  emojiFallback: true,
   timings: { canvasKitMs: 0, parseMs: 0, fontsMs: 0, renderMs: 0 }
 })
 
