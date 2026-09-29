@@ -7,7 +7,12 @@
 
 import type { SceneNode, StyleRun } from '@open-pencil/scene-graph'
 
-import type { StudioPreviewCandidate, StudioPreviewContent, StudioRoleName } from './api'
+import type {
+  StudioPreviewCandidate,
+  StudioPreviewContent,
+  StudioPreviewGroup,
+  StudioRoleName
+} from './api'
 
 export type ContentPreviewSelection =
   | { kind: 'none' }
@@ -19,14 +24,22 @@ export const PREVIEW_COPY = {
   buttonActive: (title: string) => `Preview: ${title}`,
   srOnly: 'Preview content, not saved',
   heading: 'Approved Arabic candidates',
+  /** Track fb74-studio-preview-kinds (H-70): the second section — an article's derived kinds. */
+  kindsHeading: 'Article kinds',
   sample: 'Sample text',
   none: 'None',
   refresh: 'Refresh',
   loading: 'Loading candidates…',
   empty: 'No approved Arabic candidates yet — approve one on Plan and it appears here.',
+  kindsEmpty: 'No article kinds yet — Like an idea on Plan and its kinds appear here.',
   unavailable: 'Preview unavailable',
   aiImage: 'AI image — coming later',
   approved: (relative: string) => `Approved ${relative}`,
+  /** A kind candidate's time line: when its copy was written. */
+  written: (relative: string) => `Written ${relative}`,
+  /** "<Kind name> · <piece title>" — a kind row's title; the kind name alone when the piece has no title. */
+  kindRow: (kindName: string, pieceTitle: string) =>
+    pieceTitle ? `${kindName} · ${pieceTitle}` : kindName,
   brandSection: 'Preview with',
   brandDefault: 'Default',
   brandReset: 'Reset to default',
@@ -57,19 +70,68 @@ const TEXT_SLOT_FIELD: Partial<Record<string, PreviewTextField>> = {
   'article-url': 'articleUrl'
 }
 
+/** Track fb74-studio-preview-kinds (H-70): the kind-only text slots, read from `content.slots`. */
+export const KIND_TEXT_SLOTS = ['number', 'step'] as const
+export type KindTextSlot = (typeof KIND_TEXT_SLOTS)[number]
+
 export function isPreviewTextSlot(slot: string): boolean {
-  return slot in TEXT_SLOT_FIELD
+  return slot in TEXT_SLOT_FIELD || (KIND_TEXT_SLOTS as readonly string[]).includes(slot)
 }
 
-/** The text a content slot shows; null when the slot carries no text (image slots) or the value is empty. */
-export function contentTextFor(slot: string, content: StudioPreviewContent): string | null {
+/**
+ * The text a content slot shows; null when the slot carries no text (image
+ * slots) or the value is empty. `content:number` reads `slots.number`;
+ * `content:step` reads `slots.step[stepIndex]` (H-70) — a candidate without
+ * the slot, or a layer past the last step, shows nothing (the placeholder stays).
+ */
+export function contentTextFor(
+  slot: string,
+  content: StudioPreviewContent,
+  stepIndex: number | null = null
+): string | null {
+  if (slot === 'number') return nonEmpty(content.slots?.number)
+  if (slot === 'step') {
+    if (stepIndex === null || stepIndex < 0) return null
+    return nonEmpty(content.slots?.step?.[stepIndex])
+  }
   const field = TEXT_SLOT_FIELD[slot]
   if (!field) return null
-  const value = content[field].trim()
-  return value.length > 0 ? value : null
+  return nonEmpty(content[field])
 }
 
-/** "Preview: <title>" reads the candidate's title line, "Preview: Sample text" the sample. */
+function nonEmpty(value: string | undefined): string | null {
+  const trimmed = value?.trim() ?? ''
+  return trimmed.length > 0 ? trimmed : null
+}
+
+/**
+ * Track fb74-studio-preview-kinds (H-70): which step each `content:step` layer
+ * shows. The layers are numbered in ONE sequence — the `cover` frame's step
+ * layers first (paint order), then every `repeat` frame's in paint order — so a
+ * one-layer-per-frame template reads step 1 on the cover and step 2, 3 … on the
+ * repeats. A step layer on an `ending` frame, on an unnamed frame or outside
+ * every frame gets no index (the placeholder stays). Pure: nothing here reads a
+ * graph — the overlay hands in the refs and the frames' roles.
+ */
+export function stepIndexesFor(
+  refs: readonly { nodeId: string; slot: string; frameId: string | null }[],
+  frameRole: (frameId: string) => StudioRoleName | null
+): Map<string, number> {
+  const out = new Map<string, number>()
+  const cover: string[] = []
+  const repeat: string[] = []
+  for (const ref of refs) {
+    if (ref.slot !== 'step' || !ref.frameId) continue
+    const role = frameRole(ref.frameId)
+    if (role === 'cover') cover.push(ref.nodeId)
+    else if (role === 'repeat') repeat.push(ref.nodeId)
+  }
+  let index = 0
+  for (const nodeId of [...cover, ...repeat]) out.set(nodeId, index++)
+  return out
+}
+
+/** "Preview: <title>" reads the candidate's title line — a kind's "<Kind> · <piece>" — "Preview: Sample text" the sample. */
 export function selectionWords(selection: ContentPreviewSelection): string {
   switch (selection.kind) {
     case 'none':
@@ -77,8 +139,55 @@ export function selectionWords(selection: ContentPreviewSelection): string {
     case 'sample':
       return PREVIEW_COPY.buttonActive(PREVIEW_COPY.sample)
     default:
-      return PREVIEW_COPY.buttonActive(selection.candidate.title || selection.candidate.id)
+      return PREVIEW_COPY.buttonActive(candidateRowTitle(selection.candidate))
   }
+}
+
+/** The words a candidate is listed under: a kind row "<Kind name> · <piece title>", else the title line, else the id. */
+export function candidateRowTitle(candidate: StudioPreviewCandidate): string {
+  if (candidate.kind) return PREVIEW_COPY.kindRow(candidate.kind.nameEn, candidate.kind.pieceTitle)
+  return candidate.title || candidate.id
+}
+
+/**
+ * Track fb74-studio-preview-kinds (H-70): the menu's sections. An app that
+ * sends `groups` names them; an older app's flat list is ONE Arabic section.
+ * Every candidate of every group is also in the flat list the overlay picks
+ * from, so `?preview=<id>` and Refresh work the same for both shapes.
+ */
+export function previewGroupsOf(body: {
+  candidates?: StudioPreviewCandidate[]
+  groups?: StudioPreviewGroup[]
+}): { candidates: StudioPreviewCandidate[]; groups: StudioPreviewGroup[] } {
+  const flat = Array.isArray(body.candidates) ? body.candidates : []
+  const sent = Array.isArray(body.groups)
+    ? body.groups.filter(
+        (g: unknown): g is StudioPreviewGroup =>
+          typeof g === 'object' &&
+          g !== null &&
+          typeof (g as { key?: unknown }).key === 'string' &&
+          Array.isArray((g as { candidates?: unknown }).candidates)
+      )
+    : []
+  if (sent.length === 0) {
+    return {
+      candidates: flat,
+      groups: [{ key: 'arabic', label: PREVIEW_COPY.heading, candidates: flat }]
+    }
+  }
+  const groups = sent.map((g) => ({
+    key: g.key,
+    label: typeof g.label === 'string' && g.label ? g.label : PREVIEW_COPY.heading,
+    candidates: g.candidates
+  }))
+  const seen = new Set<string>()
+  const candidates: StudioPreviewCandidate[] = []
+  for (const c of [...flat, ...groups.flatMap((g) => g.candidates)]) {
+    if (seen.has(c.id)) continue
+    seen.add(c.id)
+    candidates.push(c)
+  }
+  return { candidates, groups }
 }
 
 /** The content a selection previews with; null for None. */
@@ -138,7 +247,11 @@ export function remapStyleRuns(
     const end = run.start + run.length
     const newEnd = end >= oldLength ? newLength : Math.min(end, newLength)
     if (newEnd <= run.start) continue
-    out.push({ start: run.start, length: newEnd - run.start, style: run.style })
+    out.push({
+      start: run.start,
+      length: newEnd - run.start,
+      style: run.style
+    })
   }
   return out
 }
@@ -149,15 +262,20 @@ export function remapStyleRuns(
  * shows the first body chunk: the app's own `bodyChunks[0]` when the content
  * carries the chunks (Track E3d-c design mode — the same words the render
  * will use), else the whole body truncated to the layer's box.
- * Null when the slot has nothing to show (empty value, image slot).
+ * Null when the slot has nothing to show (empty value, image slot). A
+ * `content:step` layer shows `slots.step[options.stepIndex]` (H-70).
  */
 export function contentPreviewChanges(
   node: Pick<SceneNode, 'text' | 'styleRuns' | 'width' | 'height' | 'fontSize' | 'lineHeight'>,
   slot: string,
   content: StudioPreviewContent,
-  options: { role: StudioRoleName | null; maxChars: number | null }
+  options: {
+    role: StudioRoleName | null
+    maxChars: number | null
+    stepIndex?: number | null
+  }
 ): Partial<SceneNode> | null {
-  let text = contentTextFor(slot, content)
+  let text = contentTextFor(slot, content, options.stepIndex ?? null)
   if (text === null) return null
   if (slot === 'body' && options.role === 'repeat') {
     const chunk = content.bodyChunks?.[0]?.trim()

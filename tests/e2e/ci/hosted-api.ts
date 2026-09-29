@@ -50,7 +50,8 @@ export const CAROUSEL = {
 }
 
 export const VOCABULARY = {
-  contentText: ['title', 'subtitle', 'body', 'cta', 'article-url'],
+  // Track fb74-studio-preview-kinds (H-70): `number` / `step` — the app's `CONTENT_TEXT_SLOTS` since FB-74.
+  contentText: ['title', 'subtitle', 'body', 'cta', 'article-url', 'number', 'step'],
   contentImage: ['image'],
   reserved: ['ai-image'],
   brandKinds: ['user-image', 'company-logo-light', 'company-logo-dark'],
@@ -72,6 +73,9 @@ export const VOCABULARY = {
     'content:body': 'the body text; on a carousel the chunk for that slide',
     'content:cta': 'call to action',
     'content:article-url': 'the article link (text)',
+    'content:number': "the Number kind's figure (text; empty for other kinds)",
+    'content:step':
+      'one step / item of a List or Steps kind on a repeat frame (text; empty otherwise)',
     'content:image': "the source post's image (image fill)",
     'content:ai-image': 'reserved, placeholder today',
     'brand:user-image': 'your default user image',
@@ -122,6 +126,38 @@ export const CANDIDATE = {
   approvedAt: '2026-09-22T09:00:00Z',
   imageUrl: null
 }
+
+// Track fb74-studio-preview-kinds (H-70): the second section — one How-to kind of
+// a READY piece, id `kind:<piece>:<key>`, the steps in `slots.step` and the
+// figure a Number kind would carry in `slots.number`.
+export const KIND_CANDIDATE = {
+  id: 'kind:piece-1:how_to',
+  title: 'كيف تقلل الاجتماعات',
+  subtitle: 'إنتاجية',
+  body: 'احذف اجتماعًا واحدًا أسبوعيًا.\nاكتب جدولًا قبل كل اجتماع.\nأنهِ الاجتماع عند انتهاء الجدول.',
+  cta: 'ابدأ بالخطوة الأولى اليوم.',
+  articleUrl: 'https://example.invalid/articles/preview',
+  bodyChunks: [
+    'احذف اجتماعًا واحدًا أسبوعيًا.',
+    'اكتب جدولًا قبل كل اجتماع.',
+    'أنهِ الاجتماع عند انتهاء الجدول.'
+  ],
+  slots: {
+    number: '٣',
+    step: [
+      'احذف اجتماعًا واحدًا أسبوعيًا.',
+      'اكتب جدولًا قبل كل اجتماع.',
+      'أنهِ الاجتماع عند انتهاء الجدول.'
+    ]
+  },
+  format: null,
+  formatLabel: null,
+  approvedAt: '2026-09-22T10:00:00Z',
+  imageUrl: null,
+  kind: { key: 'how_to', nameEn: 'How-to', nameAr: 'خطوات', pieceTitle: 'أسبوع بلا اجتماعات' }
+}
+export type PreviewCandidateFixture = typeof CANDIDATE | typeof KIND_CANDIDATE
+export const GROUP_LABELS = { arabic: 'Approved Arabic candidates', kinds: 'Article kinds' }
 
 // FB-58: one brand asset the Assets panel's Brand library shows — a real PNG the
 // Studio can decode, served bearer-gated from the asset path like the app does.
@@ -184,8 +220,14 @@ export interface APIOptions {
   ai?: AIBlock
   fixture?: string
   format?: typeof FORMAT
-  /** Candidates the preview route answers; `null` → the route 404s (older app). */
-  candidates?: Array<typeof CANDIDATE> | null
+  /** Candidates the preview route answers (the Arabic section); `null` → the route 404s (older app). */
+  candidates?: Array<PreviewCandidateFixture> | null
+  /**
+   * Track fb74-studio-preview-kinds (H-70): the Article kinds section. Default one How-to
+   * kind; `[]` → an empty section; `null` → the route answers the flat list ONLY (an app
+   * before this track) and the menu shows the one Arabic section.
+   */
+  kinds?: Array<PreviewCandidateFixture> | null
   /** FB-58: the payload's `brand` block; default none (the library is not installed). Track FB-69: `text` may be absent. */
   brand?: (Omit<typeof BRAND, 'text'> & { text?: typeof BRAND_TEXT }) | null
   /** Track FB-69: the vocabulary the payload carries; `VOCABULARY_OLDER` plays an app before H-68. */
@@ -317,8 +359,18 @@ export async function installAPI(page: Page, saves: SavedBody[], options: APIOpt
       if (options.candidates === null) {
         return route.fulfill({ status: 404, json: { error: 'not found' } })
       }
+      const arabic = options.candidates ?? [CANDIDATE]
+      if (options.kinds === null) return route.fulfill({ json: { candidates: arabic } })
+      // H-70: the app's shape — `groups` + the flat concatenation, Arabic first.
+      const kinds = options.kinds ?? [KIND_CANDIDATE]
       return route.fulfill({
-        json: { candidates: options.candidates ?? [CANDIDATE] }
+        json: {
+          candidates: [...arabic, ...kinds],
+          groups: [
+            { key: 'arabic', label: GROUP_LABELS.arabic, candidates: arabic },
+            { key: 'kinds', label: GROUP_LABELS.kinds, candidates: kinds }
+          ]
+        }
       })
     }
     if (url.pathname === `/api/studio/templates/${TEMPLATE_ID}`) {

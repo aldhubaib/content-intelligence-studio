@@ -17,15 +17,23 @@ import {
   type StudioBrandAssetKind,
   type StudioDesignContent,
   type StudioDocumentPayload,
-  type StudioPreviewCandidate
+  type StudioPreviewCandidate,
+  type StudioPreviewGroup
 } from './api'
-import { preselectedCandidate } from './preview'
+import { preselectedCandidate, previewGroupsOf } from './preview'
 import { createPreviewOverlay, type LockedTextKind, type PreviewOverlay } from './preview-overlay'
 
 export type PreviewCandidatesState =
   | { kind: 'idle' }
   | { kind: 'loading' }
-  | { kind: 'ready'; candidates: StudioPreviewCandidate[]; loadedAt: string }
+  | {
+      kind: 'ready'
+      /** Every candidate of every group — what the overlay picks from and `?preview=` looks up. */
+      candidates: StudioPreviewCandidate[]
+      /** Track fb74-studio-preview-kinds (H-70): the menu's sections — Arabic candidates · Article kinds. */
+      groups: StudioPreviewGroup[]
+      loadedAt: string
+    }
   | { kind: 'unavailable' }
 
 export interface PreviewCandidatesOptions {
@@ -52,9 +60,13 @@ export function createPreviewCandidates(
 
   async function fetchList(url: string): Promise<StudioPreviewCandidate[]> {
     try {
-      const body = await api.fetchJSON<{ candidates?: StudioPreviewCandidate[] }>(url)
-      const candidates = Array.isArray(body.candidates) ? body.candidates : []
-      state.value = { kind: 'ready', candidates, loadedAt: now().toISOString() }
+      const body = await api.fetchJSON<{
+        candidates?: StudioPreviewCandidate[]
+        groups?: StudioPreviewGroup[]
+      }>(url)
+      // H-70: `groups` when the app sends them, else the flat list as one Arabic section.
+      const { candidates, groups } = previewGroupsOf(body)
+      state.value = { kind: 'ready', candidates, groups, loadedAt: now().toISOString() }
       return candidates
     } catch (error: unknown) {
       if (error instanceof StudioUnauthorizedError) options.onUnauthorized()

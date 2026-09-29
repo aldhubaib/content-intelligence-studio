@@ -27,6 +27,8 @@ const DESCRIBED: StudioBindingsVocabulary = {
     'content:body': 'the body text; on a carousel the chunk for that slide',
     'content:cta': 'call to action',
     'content:article-url': 'the article link (text)',
+    'content:number': 'the number a Number kind names (text)',
+    'content:step': 'one step or list item; cover first, then repeat slides (text)',
     'content:image': "the source post's image (image fill)",
     'content:ai-image': 'reserved, placeholder today',
     'brand:user-image': 'your default user image',
@@ -72,6 +74,8 @@ describe('namesGroups', () => {
       'content:body',
       'content:cta',
       'content:article-url',
+      'content:number',
+      'content:step',
       'content:image',
       'content:ai-image'
     ])

@@ -12,6 +12,8 @@ import {
   BRAND_TEXT,
   CANDIDATE,
   FRAME_ID,
+  GROUP_LABELS,
+  KIND_CANDIDATE,
   SAMPLE_TEXT,
   TEMPLATE_ID,
   VOCABULARY_OLDER,
@@ -22,6 +24,19 @@ import {
 /** Track FB-69: the two brand text layers of `tests/fixtures/ci/hosted-template-brand-text.json`. */
 const DISPLAY_NAME_ID = '0:6'
 const HANDLE_ID = '0:7'
+
+/**
+ * Track fb74-studio-preview-kinds (H-70): `tests/fixtures/ci/hosted-template-kinds.json` —
+ * cover (title · number · step) · repeat (body · step) · ending (cta · step).
+ */
+const KINDS = {
+  title: '0:5',
+  number: '0:6',
+  coverStep: '0:7',
+  repeatBody: '0:9',
+  repeatStep: '0:10',
+  endingStep: '0:13'
+} as const
 
 test.describe('hosted mode — preview with real content', () => {
   test('E3d-b1 (FB-44 §6): Preview with ▾ paints a candidate, is not an edit, never saves, and reopens clean', async ({
@@ -209,6 +224,124 @@ test.describe('hosted mode — preview with real content', () => {
     expect(sent).not.toContain(BRAND_TEXT.handle)
     await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v4')
     expect(await textOf(HANDLE_ID)).toBe(BRAND_TEXT.handle)
+    canvas.assertNoErrors()
+  })
+
+  test('Track fb74-studio-preview-kinds (H-70): two sections — an article kind paints content:number / content:step (cover first, then repeat), never an edit, never saved; ?preview=kind:… preselects', async ({
+    page
+  }) => {
+    const saves: SavedBody[] = []
+    await installAPI(page, saves, { fixture: 'hosted-template-kinds' })
+    const canvas = new CanvasHelper(page)
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await expect(page.getByTestId('ci-bindings-status')).toHaveText('All changes saved.')
+    const textOf = (id: string) =>
+      page.evaluate(
+        (nodeId) => window.openPencil?.getStore?.()?.graph.getNode(nodeId)?.text ?? null,
+        id
+      )
+    const menu = page.getByTestId('ci-preview-menu')
+
+    // Two labelled sections: the Arabic candidate under the first, the kind row "<Kind> · <piece title>" under the second.
+    await menu.click()
+    await expect(page.getByTestId('ci-preview-menu-content')).toBeVisible()
+    await expect(page.getByTestId('ci-preview-section-arabic')).toHaveText(GROUP_LABELS.arabic)
+    await expect(page.getByTestId('ci-preview-section-kinds')).toHaveText(GROUP_LABELS.kinds)
+    await expect(page.getByTestId(`ci-preview-candidate-${CANDIDATE.id}`)).toBeVisible()
+    const kindRow = page.getByTestId(`ci-preview-candidate-${KIND_CANDIDATE.id}`)
+    await expect(kindRow).toBeVisible()
+    await expect(kindRow).toHaveAttribute('data-kind', 'how_to')
+    await expect(kindRow).toContainText(`How-to · ${KIND_CANDIDATE.kind.pieceTitle}`)
+    await expect(kindRow).toContainText('Written')
+    await page.screenshot({ path: test.info().outputPath('hosted-preview-kinds-menu.png') })
+
+    // Pick the kind: title · number · step 1 on the cover, body chunk + step 2 on the repeat, the ending's step stays.
+    await kindRow.click()
+    await expect.poll(() => textOf(KINDS.title)).toBe(KIND_CANDIDATE.title)
+    await expect.poll(() => textOf(KINDS.number)).toBe(KIND_CANDIDATE.slots.number)
+    await expect.poll(() => textOf(KINDS.coverStep)).toBe(KIND_CANDIDATE.slots.step[0])
+    await expect.poll(() => textOf(KINDS.repeatStep)).toBe(KIND_CANDIDATE.slots.step[1])
+    await expect.poll(() => textOf(KINDS.repeatBody)).toBe(KIND_CANDIDATE.bodyChunks[0])
+    expect(await textOf(KINDS.endingStep)).toBe('الخطوة')
+    await expect(menu).toHaveAttribute('data-selection', KIND_CANDIDATE.id)
+    await expect(menu).toHaveAccessibleName(
+      `Preview: How-to · ${KIND_CANDIDATE.kind.pieceTitle} — Preview content, not saved`
+    )
+    // Not an edit.
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v3')
+    expect(await page.evaluate(() => window.openPencil?.getStore?.()?.undo.canUndo ?? null)).toBe(
+      false
+    )
+    await canvas.waitForRender()
+    await page.screenshot({ path: test.info().outputPath('hosted-preview-kinds.png') })
+
+    // A real edit + Save version: the PUT carries the placeholders, never the kind's words.
+    await page.evaluate((frameId) => {
+      window.openPencil?.getStore?.()?.updateNode(frameId, { x: 40 })
+    }, FRAME_ID)
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Unsaved changes')
+    await page.getByTestId('canvas-element').focus()
+    await page.keyboard.press('ControlOrMeta+s')
+    await expect.poll(() => saves.length).toBe(1)
+    const sent = JSON.stringify(saves[0].document)
+    expect(sent).toContain('٠')
+    expect(sent).toContain('الخطوة')
+    expect(sent).not.toContain(KIND_CANDIDATE.slots.number)
+    expect(sent).not.toContain(KIND_CANDIDATE.slots.step[0])
+    expect(sent).not.toContain(KIND_CANDIDATE.title)
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v4')
+    expect(await textOf(KINDS.coverStep)).toBe(KIND_CANDIDATE.slots.step[0])
+
+    // An Arabic candidate has no number / step: those layers go back to their placeholders, the title follows.
+    await menu.click()
+    await page.getByTestId(`ci-preview-candidate-${CANDIDATE.id}`).click()
+    await expect.poll(() => textOf(KINDS.title)).toBe(CANDIDATE.title)
+    await expect.poll(() => textOf(KINDS.number)).toBe('٠')
+    await expect.poll(() => textOf(KINDS.coverStep)).toBe('الخطوة')
+    await expect.poll(() => textOf(KINDS.repeatStep)).toBe('الخطوة')
+    // None restores everything.
+    await menu.click()
+    await page.getByTestId('ci-preview-none').click()
+    await expect.poll(() => textOf(KINDS.title)).toBe('عنوان تجريبي')
+    await expect.poll(() => textOf(KINDS.repeatBody)).toBe('نص الشريحة')
+
+    // `?preview=kind:<piece>:<key>` from the app pre-selects the kind on open.
+    await page.goto(
+      `/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}&preview=${encodeURIComponent(KIND_CANDIDATE.id)}`
+    )
+    await canvas.waitForInit()
+    await expect.poll(() => textOf(KINDS.number)).toBe(KIND_CANDIDATE.slots.number)
+    await expect.poll(() => textOf(KINDS.repeatStep)).toBe(KIND_CANDIDATE.slots.step[1])
+    await expect(page.getByTestId('ci-preview-menu')).toHaveAttribute(
+      'data-selection',
+      KIND_CANDIDATE.id
+    )
+    await expect(page.getByTestId('ci-title-save-state')).toHaveText('Saved · v4')
+    canvas.assertNoErrors()
+  })
+
+  test('Track fb74-studio-preview-kinds (H-70): an empty kinds section says so; an app without groups shows the one Arabic section', async ({
+    page
+  }) => {
+    await installAPI(page, [], { fixture: 'hosted-template-kinds', kinds: [] })
+    const canvas = new CanvasHelper(page)
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await page.getByTestId('ci-preview-menu').click()
+    await expect(page.getByTestId('ci-preview-section-kinds')).toBeVisible()
+    await expect(page.getByTestId('ci-preview-kinds-empty')).toContainText('No article kinds yet')
+    await expect(page.getByTestId(`ci-preview-candidate-${CANDIDATE.id}`)).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    // An app before this track answers the flat list only → ONE section, headed as before.
+    await installAPI(page, [], { fixture: 'hosted-template-kinds', kinds: null })
+    await page.goto(`/?doc=${TEMPLATE_ID}&ws=nizek&token=smoke-token&api=${API}`)
+    await canvas.waitForInit()
+    await page.getByTestId('ci-preview-menu').click()
+    await expect(page.getByTestId('ci-preview-section-arabic')).toHaveText(GROUP_LABELS.arabic)
+    await expect(page.getByTestId('ci-preview-section-kinds')).toHaveCount(0)
+    await expect(page.getByTestId(`ci-preview-candidate-${CANDIDATE.id}`)).toBeVisible()
     canvas.assertNoErrors()
   })
 
