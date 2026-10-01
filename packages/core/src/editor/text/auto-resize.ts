@@ -42,9 +42,7 @@ function hasTextAutoWidthChange(changes: Partial<SceneNode>): boolean {
 export function textAutoResizeChanges(
   node: SceneNode | undefined,
   changes: Partial<SceneNode>
-): Partial<
-  Pick<SceneNode, 'width' | 'height' | 'textAutoResize' | 'derivedLayout' | 'derivedTextGlyphs'>
-> {
+): Partial<Pick<SceneNode, 'width' | 'height' | 'derivedLayout' | 'derivedTextGlyphs'>> {
   if (node?.type !== 'TEXT' || !hasTextAutoResizeChange(changes)) return {}
   // Path text is laid out along its path (derivedTextGlyphs on textPathBox),
   // not by paragraph auto-resize. Running the measurement here would null the
@@ -61,26 +59,12 @@ export function textAutoResizeChanges(
   const maxWidth = mode === 'HEIGHT' ? next.width : undefined
   const measured = getTextMeasurer()?.(next, maxWidth) ?? estimateTextSize(next, maxWidth)
   const resized: Partial<
-    Pick<SceneNode, 'width' | 'height' | 'textAutoResize' | 'derivedLayout' | 'derivedTextGlyphs'>
+    Pick<SceneNode, 'width' | 'height' | 'derivedLayout' | 'derivedTextGlyphs'>
   > = { derivedLayout: null, derivedTextGlyphs: null }
 
   if (mode === 'WIDTH_AND_HEIGHT' && hasTextAutoWidthChange(changes) && measured.width > 0)
     resized.width = measured.width
-  // A drag always sends width with height. Width alone reflows an auto-height
-  // box; a height the user actually changed is the box they asked for.
-  // Font size, family, and weight must not move that height.
-  const heightChanged =
-    typeof changes.height === 'number' && Math.abs(changes.height - node.height) > 0.5
-  const typeMetricsOnly =
-    !heightChanged &&
-    !('text' in changes) &&
-    !('width' in changes) &&
-    !('maxLines' in changes) &&
-    !('textAutoResize' in changes)
-  if (heightChanged) {
-    resized.textAutoResize = 'NONE'
-    resized.height = changes.height
-  } else if (!typeMetricsOnly && measured.height > 0) resized.height = measured.height
+  if (measured.height > 0) resized.height = measured.height
 
   return resized
 }
