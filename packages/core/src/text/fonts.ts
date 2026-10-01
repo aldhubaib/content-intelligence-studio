@@ -208,6 +208,13 @@ export class FontManager {
       }
     }
     for (const font of fonts) byFamily.set(font.family, { family: font.family, source: 'local' })
+    // Faces the host registered (catalog and uploaded files) are already loaded.
+    // Online catalogs are off in hosted mode, so without this the menu is only Inter.
+    for (const key of this.loadedFamilies.keys()) {
+      const family = key.split('|')[0]
+      if (!family || family === 'Noto Color Emoji' || byFamily.has(family)) continue
+      byFamily.set(family, { family, source: 'bundled' })
+    }
     return [...byFamily.values()].sort((a, b) => a.family.localeCompare(b.family))
   }
 
