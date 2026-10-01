@@ -20,6 +20,18 @@ export const TYPOGRAPHY_WEIGHTS = Object.entries(FONT_WEIGHT_NAMES).map(([value,
   label
 }))
 
+/** Weights the family has actually loaded. The current weight stays so the field is never empty. */
+export function typographyWeightsFor(
+  family: string,
+  current: number,
+  isLoaded: (family: string, style: string) => boolean
+): { value: number; label: string }[] {
+  const loaded = TYPOGRAPHY_WEIGHTS.filter((weight) => isLoaded(family, weightToStyle(weight.value)))
+  if (loaded.some((weight) => weight.value === current)) return loaded
+  const label = FONT_WEIGHT_NAMES[current]
+  return label ? [{ value: current, label }, ...loaded] : loaded
+}
+
 export function createTypographyState(editor: Editor) {
   const node = useSceneComputed<SceneNode | null>(() => editor.getSelectedNode() ?? null)
   const { missingFonts, hasMissingFonts } = useNodeFontStatus(() => node.value)

@@ -1,7 +1,11 @@
+import { computed } from 'vue'
+
+import { fontManager } from '@open-pencil/core/text'
+
 import {
-  TYPOGRAPHY_WEIGHTS,
   createTypographyActions,
-  createTypographyState
+  createTypographyState,
+  typographyWeightsFor
 } from '#vue/controls/typography/actions'
 import { useEditor } from '#vue/editor/context'
 
@@ -29,10 +33,18 @@ export function useTypography(options: UseTypographyOptions = {}) {
   const typographyState = createTypographyState(editor)
   const actions = createTypographyActions({ editor, ...typographyState, options })
 
+  const weights = computed(() =>
+    typographyWeightsFor(
+      typographyState.fontFamily.value,
+      typographyState.fontWeight.value,
+      (family, style) => fontManager.isStyleLoaded(family, style)
+    )
+  )
+
   return {
     editor,
     ...typographyState,
-    weights: TYPOGRAPHY_WEIGHTS,
+    weights,
     ...actions
   }
 }
