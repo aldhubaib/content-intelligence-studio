@@ -9,7 +9,11 @@
 
 import { colorToCSS } from '@open-pencil/core/color'
 import type { SceneNode, Variable, VariableCollection } from '@open-pencil/scene-graph'
-import { SceneGraph } from '@open-pencil/scene-graph'
+import {
+  SceneGraph,
+  deserializeInstanceOverrideState,
+  serializeInstanceOverrideState
+} from '@open-pencil/scene-graph'
 import { createDefaultNode } from '@open-pencil/scene-graph/node-defaults'
 
 export const DOCUMENT_FORMAT = 'openpencil-scene-graph' as const
@@ -59,7 +63,10 @@ export function serializeGraph(graph: SceneGraph, engineVersion: string): Serial
     const plain: Record<string, unknown> = {}
     for (const [key, value] of Object.entries(node)) {
       if (DERIVED_NODE_FIELDS.has(key) || value === undefined) continue
-      plain[key] = value
+      plain[key] =
+        key === 'instanceOverrides'
+          ? serializeInstanceOverrideState(deserializeInstanceOverrideState(value))
+          : value
     }
     nodes.push([id, plain])
   }
@@ -100,6 +107,7 @@ export function deserializeGraph(document: unknown): SceneGraph {
       node.pluginData = Array.isArray(node.pluginData) ? node.pluginData : []
       node.textPicture = null
       node.derivedTextGlyphs = null
+      node.instanceOverrides = deserializeInstanceOverrideState(node.instanceOverrides)
       return [id, node]
     })
   )

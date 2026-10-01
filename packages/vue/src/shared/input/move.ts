@@ -85,7 +85,10 @@ export function handleMoveMove(
   const dropTarget = findMoveDropTarget(cx, cy, editor)
   const dropParent = dropTarget ? editor.graph.getNode(dropTarget.id) : null
 
-  if (dropParent && dropParent.layoutMode !== 'NONE') {
+  const movingAbsolute = [...d.originals.keys()].every(
+    (id) => editor.graph.getNode(id)?.layoutPositioning === 'ABSOLUTE'
+  )
+  if (dropParent && dropParent.layoutMode !== 'NONE' && !movingAbsolute) {
     computeAutoLayoutIndicatorForFrame(dropParent, cx, cy, editor)
     editor.setDropTarget(dropParent.id)
     let firstApplied: { dx: number; dy: number } | null = null

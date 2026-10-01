@@ -7,16 +7,33 @@ import type { Vector } from '@open-pencil/scene-graph/primitives'
 
 import type { ExplicitSnapTarget } from '#vue/shared/input/snap'
 
-function pageGuideTargets(editor: Editor): ExplicitSnapTarget[] {
-  const page = editor.graph.getNode(editor.state.currentPageId)
-  if (!page) return []
-  return page.guides.map((guide) => ({
-    kind: 'canvas-guide',
-    axis: guide.axis,
-    position: guide.position,
-    from: -1e6,
-    to: 1e6
-  }))
+/** Page guides are in canvas space. A guide pulled from the ruler onto a frame is stored on that frame, in the frame's local space, and has to be mapped into the world before an object can snap to it. */
+function guideTargets(owner: SceneNode, editor: Editor): ExplicitSnapTarget[] {
+  if (owner.guides.length === 0) return []
+  if (owner.type === 'CANVAS') {
+    return owner.guides.map((guide) => ({
+      kind: 'canvas-guide',
+      axis: guide.axis,
+      position: guide.position,
+      from: -1e6,
+      to: 1e6
+    }))
+  }
+  const matrix = getWorldMatrix(owner, editor.graph)
+  return owner.guides.flatMap((guide) => {
+    const start = Matrix.mapPoint(
+      matrix,
+      guide.axis === 'x' ? { x: guide.position, y: 0 } : { x: 0, y: guide.position }
+    )
+    const end = Matrix.mapPoint(
+      matrix,
+      guide.axis === 'x'
+        ? { x: guide.position, y: owner.height }
+        : { x: owner.width, y: guide.position }
+    )
+    const target = axisAlignedTarget(start, end)
+    return target ? [{ ...target, kind: 'canvas-guide' as const }] : []
+  })
 }
 
 const AXIS_ALIGNMENT_EPSILON = 1e-6
@@ -67,8 +84,12 @@ function layoutGuideTargets(parent: SceneNode, editor: Editor): ExplicitSnapTarg
 
 export function explicitSnapTargets(parentId: string | null | undefined, editor: Editor) {
   const parent = parentId ? editor.graph.getNode(parentId) : undefined
+  const page = editor.graph.getNode(editor.state.currentPageId)
+  const owners = [page, parent && parent !== page ? parent : undefined].filter(
+    (node): node is SceneNode => node != null
+  )
   return [
-    ...pageGuideTargets(editor),
+    ...owners.flatMap((owner) => guideTargets(owner, editor)),
     ...(parent && !editor.isTopLevel(parent.id) ? layoutGuideTargets(parent, editor) : [])
   ]
 }

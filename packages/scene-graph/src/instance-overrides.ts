@@ -78,10 +78,16 @@ export function deserializeInstanceOverrideState(state: unknown): InstanceOverri
 }
 
 export function cloneInstanceOverrideState(state: InstanceOverrideState): InstanceOverrideState {
+  // Documents saved as JSON turn these Maps into plain objects. Duplicate
+  // clones every node, so a non-Map here must revive instead of throwing.
+  const normalized =
+    state?.self instanceof Map && state?.descendants instanceof Map
+      ? state
+      : deserializeInstanceOverrideState(state)
   return {
-    self: new Map([...state.self].map(([field, value]) => [field, structuredClone(value)])),
+    self: new Map([...normalized.self].map(([field, value]) => [field, structuredClone(value)])),
     descendants: new Map(
-      [...state.descendants].map(([id, fields]) => [
+      [...normalized.descendants].map(([id, fields]) => [
         id,
         new Map([...fields].map(([field, value]) => [field, structuredClone(value)]))
       ])

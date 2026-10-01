@@ -260,6 +260,15 @@ export function useCanvasInput(
   function onMouseMove(e: MouseEvent) {
     if (!isEnabled()) return
     pointerInside.value = true
+    // Option is read from the pointer, not only keydown. A modifier does not
+    // repeat, and the keydown often lands before the pointer is over the canvas
+    // (or never reaches this frame). Spacing would otherwise stay hidden.
+    if (e.altKey !== altHeld || e.metaKey !== metaHeld || e.ctrlKey !== controlHeld) {
+      altHeld = e.altKey
+      metaHeld = e.metaKey
+      controlHeld = e.ctrlKey
+      refreshMeasurement()
+    }
     const coords = getCoords(e)
     lastPointer.value = { cx: coords.cx, cy: coords.cy }
     if (onCursorMove) {
