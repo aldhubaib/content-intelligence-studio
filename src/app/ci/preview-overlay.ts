@@ -11,8 +11,9 @@
 // designer only previewed with.
 //
 // Rules the overlay keeps:
-//   • a selected TEXT layer shows its OWN text (the inspector, in-place editing
-//     and history all read the live node) — the preview returns on deselect;
+//   • a selected TEXT layer keeps the preview, so the words stay on the canvas
+//     while the box is moved or styled; the preview lifts only while the
+//     layer's own text is being edited;
 //   • an edit that lands on an overlaid key is either the overlay echoing back
 //     (ignored) or a real document change (adopted as the new original, with
 //     a preview image hash never accepted into the document);
@@ -258,9 +259,10 @@ export function createPreviewOverlay(
   const locked = () => options.lockContentText?.() ?? false
 
   function textSuppressed(nodeId: string): boolean {
-    // Design mode: the post's text stays on the layer while it is selected — it IS what the design shows.
+    // A bound layer keeps its preview while it is selected. The preview lifts
+    // only for the text-edit session, so typing changes the layer's own words.
     if (locked()) return false
-    return store.state.selectedIds.has(nodeId) || store.state.editingTextId === nodeId
+    return store.state.editingTextId === nodeId
   }
 
   /**

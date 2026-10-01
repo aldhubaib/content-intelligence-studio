@@ -276,12 +276,12 @@ describe('content preview', () => {
     expect(store.hasUnsavedChanges()).toBe(false)
   })
 
-  test('a selected text layer shows its own text; the preview returns on deselect', () => {
+  test('a selected text layer keeps the preview', () => {
     const { store, overlay, ids } = build()
     overlay.setContent({ kind: 'sample' })
     store.select([ids.title])
-    expect(node(store, ids.title).text).toBe('Title placeholder')
-    expect(overlay.isPreviewed(ids.title)).toBe(false)
+    expect(node(store, ids.title).text).toBe(SAMPLE.title)
+    expect(overlay.isPreviewed(ids.title)).toBe(true)
     expect(node(store, ids.body).text).toBe(SAMPLE.body)
     store.select([])
     expect(node(store, ids.title).text).toBe(SAMPLE.title)
@@ -301,10 +301,10 @@ describe('content preview', () => {
     expect(doc.graph.nodes.find(([id]) => id === ids.title)?.[1].text).toBe('New placeholder')
     expect(JSON.stringify(doc)).not.toContain(SAMPLE.title)
 
-    // Undo lands on the document value, not on the preview.
+    // Undo lands on the document value; the selected layer keeps showing the preview.
     store.select([ids.title])
     store.undo.undo()
-    expect(node(store, ids.title).text).toBe('Title placeholder')
+    expect(node(store, ids.title).text).toBe(SAMPLE.title)
     store.select([])
     expect(node(store, ids.title).text).toBe(SAMPLE.title)
     overlay.setContent({ kind: 'none' })
@@ -459,7 +459,7 @@ describe('design mode — locked content text (Track E3d-c)', () => {
     expect(overlay.isLocked(ids.image)).toBe(false)
     expect(overlay.isLocked(ids.brand)).toBe(false)
 
-    // Selecting the layer does NOT lift the preview (a template session would show the placeholder).
+    // Selecting the layer does not lift the preview.
     store.select([ids.title])
     expect(node(store, ids.title).text).toBe(CANDIDATE.title)
 
@@ -488,7 +488,10 @@ describe('design mode — locked content text (Track E3d-c)', () => {
     store.select([ids.title])
     store.updateNodeWithUndo(ids.title, { text: 'my own words' }, 'Edit text')
     expect(refused).toEqual([])
-    expect(node(store, ids.title).text).toBe('my own words')
+    expect(node(store, ids.title).text).toBe(CANDIDATE.title)
+    expect(overlay.serialize(ENGINE).graph.nodes.find(([id]) => id === ids.title)?.[1].text).toBe(
+      'my own words'
+    )
     expect(overlay.isLocked(ids.title)).toBe(false)
   })
 
@@ -570,11 +573,11 @@ describe('brand text preview (Track FB-69, H-68)', () => {
     expect(saved(none.overlay)).toBe(none.before)
   })
 
-  test('a selected brand text layer shows its own words; the preview returns on deselect; an edit is adopted', () => {
+  test('a selected brand text layer keeps the preview; an edit is adopted', () => {
     const { store, overlay, ids } = build({ brandText: BRAND_TEXT })
     store.select([ids.displayName])
-    expect(node(store, ids.displayName).text).toBe('Your name')
-    expect(overlay.isPreviewed(ids.displayName)).toBe(false)
+    expect(node(store, ids.displayName).text).toBe('Nizek')
+    expect(overlay.isPreviewed(ids.displayName)).toBe(true)
     store.select([])
     expect(node(store, ids.displayName).text).toBe('Nizek')
 
