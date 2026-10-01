@@ -156,6 +156,30 @@ describe('contentPreviewChanges', () => {
     ).toBe(true)
   })
 
+  test('a numbered body on a repeat frame shows the first point, and content:index shows 1', () => {
+    const wide = { ...text, width: 800, height: 800, fontSize: 16 }
+    const listed = {
+      ...CONTENT,
+      body: 'مقدمة قصيرة.\n1. النقطة الأولى من القائمة\n2. النقطة الثانية\n3. النقطة الثالثة'
+    }
+    expect(contentPreviewChanges(wide, 'body', listed, { role: 'repeat', maxChars: null })).toEqual({
+      text: 'النقطة الأولى من القائمة'
+    })
+    expect(
+      contentPreviewChanges(wide, 'body', { ...listed, bodyChunks: [listed.body] }, {
+        role: 'repeat',
+        maxChars: null
+      })
+    ).toEqual({ text: 'النقطة الأولى من القائمة' })
+    expect(contentPreviewChanges(wide, 'index', listed, { role: 'repeat', maxChars: null })).toEqual({
+      text: '1'
+    })
+    expect(contentPreviewChanges(wide, 'index', listed, { role: 'cover', maxChars: null })).toBeNull()
+    expect(contentPreviewChanges(wide, 'body', listed, { role: 'cover', maxChars: null })).toEqual({
+      text: listed.body
+    })
+  })
+
   test('an empty value or an image slot yields nothing', () => {
     expect(
       contentPreviewChanges(text, 'subtitle', CONTENT, { role: 'cover', maxChars: null })

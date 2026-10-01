@@ -259,12 +259,38 @@ export function remapStyleRuns(
 /**
  * The preview changes for ONE `content:*` text layer — `text` (+ remapped
  * `styleRuns`); the font and the box stay (no auto-shrink). A `repeat` frame
- * shows the first body chunk: the app's own `bodyChunks[0]` when the content
- * carries the chunks (Track E3d-c design mode — the same words the render
- * will use), else the whole body truncated to the layer's box.
+ * shows one slide of the body: the first chunk when the content carries
+ * several, else the first numbered line, else the body cut to the layer's box.
+ * A `repeat` frame's `content:index` shows 1. The font and the box stay.
  * Null when the slot has nothing to show (empty value, image slot). A
  * `content:step` layer shows `slots.step[options.stepIndex]` (H-70).
  */
+const BULLET_MARKER = /^(?:[-•*]|(?:\d+|[٠-٩]+)[.)])\s+/u
+
+/** The first item of a numbered or bulleted body, marker removed. Null unless there are at least two items. */
+export function firstBullet(text: string): string | null {
+  const items = text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => BULLET_MARKER.test(line))
+    .map((line) => line.replace(BULLET_MARKER, '').trim())
+    .filter((line) => line.length > 0)
+  return items.length >= 2 ? (items[0] ?? null) : null
+}
+
+/** What a `repeat` frame's `content:body` shows: one chunk, else the first bullet, else the box. */
+function repeatBodyPreview(
+  text: string,
+  content: StudioPreviewContent,
+  node: Pick<SceneNode, 'width' | 'height' | 'fontSize' | 'lineHeight'>,
+  maxChars: number | null
+): string {
+  const chunks = (content.bodyChunks ?? []).map((chunk) => chunk.trim()).filter((chunk) => chunk.length > 0)
+  if (chunks.length > 1) return chunks[0] ?? ''
+  const source = chunks[0] ?? text
+  return firstBullet(source) ?? (chunks[0] ? chunks[0] : truncateWithEllipsis(text, estimateBoxChars(node, maxChars)))
+}
+
 export function contentPreviewChanges(
   node: Pick<SceneNode, 'text' | 'styleRuns' | 'width' | 'height' | 'fontSize' | 'lineHeight'>,
   slot: string,
@@ -275,11 +301,12 @@ export function contentPreviewChanges(
     stepIndex?: number | null
   }
 ): Partial<SceneNode> | null {
+  // The canvas holds one `repeat` frame. That frame is slide 1.
+  if (slot === 'index') return options.role === 'repeat' ? textPreviewChanges(node, '1') : null
   let text = contentTextFor(slot, content, options.stepIndex ?? null)
   if (text === null) return null
   if (slot === 'body' && options.role === 'repeat') {
-    const chunk = content.bodyChunks?.[0]?.trim()
-    text = chunk ? chunk : truncateWithEllipsis(text, estimateBoxChars(node, options.maxChars))
+    text = repeatBodyPreview(text, content, node, options.maxChars)
   }
   return textPreviewChanges(node, text)
 }
