@@ -85,7 +85,7 @@ export function cloneInstanceOverrideState(state: unknown): InstanceOverrideStat
       ? (state as { self?: unknown; descendants?: unknown })
       : null
   const normalized =
-    record?.self instanceof Map && record?.descendants instanceof Map
+    record?.self instanceof Map && record.descendants instanceof Map
       ? (state as InstanceOverrideState)
       : deserializeInstanceOverrideState(state)
   return {
